@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/go-zpkg/zpkb/buildscript"
 	"github.com/go-zpkg/zpkb/recipefile"
 )
 
@@ -96,6 +97,35 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// Zero is the stricter answer and it is available.
 	requireHCL := fset.Bool("require-hcl", false,
 		"fail a recipe that is not written in HCL — our own trees hold package.hcl only")
+	// ⛔⛔ A SCRIPT THE BUILDER'S OWN RENDERER REFUSES, FOUND BY READING ONE
+	// RECIPE AND THEN SWEPT. openucx.org carried two `test` entries that were
+	// one-key MAPS rather than strings:
+	//
+	//	{ "ucx_info -d | grep -q \"Transport" = "posix\"" }
+	//
+	// which is what the yaml line `- ucx_info -d | grep -q "Transport: posix"`
+	// decodes to: the `: ` inside the quotes makes the whole list item a
+	// mapping, the key ending at `"Transport` and the value beginning `posix"`.
+	// The HCL conversion carried that structure faithfully, so the defect
+	// predated it by however long the yaml had been there.
+	//
+	// ⛔ AND IT WAS NOT A SILENT SKIP. buildscript.scriptItem sees a map, finds
+	// no `if` and no `run`, and renderRun(nil) falls to its default arm:
+	// "script step needs a `run` string or list". So the ENTIRE test block was
+	// unrenderable and `zpkb test openucx.org` could not run at all — while
+	// `lint` was green, because parsing a recipe and rendering its scripts are
+	// different questions.
+	//
+	// THE JUDGE IS buildscript.Generate ITSELF, deliberately. A rule here about
+	// what a script entry may contain would re-state the schema in a second
+	// place, and the day the two disagreed the lane and the build would
+	// disagree too — which is the defect this file's first check already
+	// carries in its own comment.
+	//
+	// ⭐ No ratchet: swept over all 222 recipes of go-zpkg/pantry-overlay, that
+	// one block was the only refusal in the tree, so zero is where this starts.
+	renderScripts := fset.Bool("render-scripts", false,
+		"fail a recipe whose build or test script the builder's own renderer cannot render")
 	// ⛔⛔ A GATE THAT STARTS RED IS NOT A GATE, IT IS A LIGHT NOBODY READS, and
 	// pantry-overlay's own ci.yml carries that lesson already: its lint step
 	// invoked a module path that no longer existed, so every pull request after
@@ -177,7 +207,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	var bad, unrecorded, fragments, signedSha []string
+	var bad, unrecorded, fragments, signedSha, unrendered []string
 	for _, proj := range projects {
 		// The project's DIRECTORY rather than (dir, project): the loader that
 		// takes a pantry and a project joins `projects/` in, which is right for
@@ -204,6 +234,25 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		if u := shaNamesASignature(r.Distributable); u != "" {
 			signedSha = append(signedSha, fmt.Sprintf("  %s: sha = %q", proj, u))
 		}
+		// Rendered with ZERO Options on purpose: no tokens, no target. A
+		// moustache then stays literal and an `if:` guard simply selects
+		// nothing, so what is left is the only question asked here — whether
+		// the renderer can read the script's SHAPE at all. Swept over 222 real
+		// recipes with exactly these options, one block was refused and it was
+		// a genuine defect, so this produces no false positives on the corpus
+		// it is for.
+		if *renderScripts {
+			for _, block := range []string{"build", "test"} {
+				b, ok := doc[block].(map[string]any)
+				if !ok || b["script"] == nil {
+					continue
+				}
+				if _, err := buildscript.Generate(b["script"], buildscript.Options{}); err != nil {
+					unrendered = append(unrendered,
+						fmt.Sprintf("  %s: %s: %v", proj, block, err))
+				}
+			}
+		}
 	}
 	fmt.Fprintf(stdout, "%d recipe(s) read from %s\n", len(projects), root)
 	// Judged on the NAMES, from the same walk that produced the count above. A
@@ -218,6 +267,14 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 				}
 			}
 		}
+	}
+	if len(unrendered) > 0 {
+		sort.Strings(unrendered)
+		fmt.Fprintf(stderr, "%d script block(s) of %d project(s) cannot be rendered by the "+
+			"builder's own renderer, so the step they describe would never run — `lint` parsing a "+
+			"recipe and `buildscript` rendering its script are different questions, and only this "+
+			"one is asked here (go-zpkg/pantry-overlay#107):\n", len(unrendered), len(projects))
+		fmt.Fprintln(stderr, strings.Join(unrendered, "\n"))
 	}
 	if len(notHCL) > 0 {
 		sort.Strings(notHCL)
@@ -310,6 +367,10 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// No tolerance and no ceiling, for the reason given where the flag is
 	// declared: this check is at zero already.
 	if len(notHCL) > 0 {
+		return 1
+	}
+	// Also no tolerance and no ceiling: the tree it was written for has none.
+	if len(unrendered) > 0 {
 		return 1
 	}
 	return 0

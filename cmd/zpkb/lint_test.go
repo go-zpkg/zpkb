@@ -628,6 +628,100 @@ func TestLintRecipeFilesReportsEveryNameAProjectHolds(t *testing.T) {
 	}
 }
 
+// ⛔⛔ THE EXACT SHAPE openucx.org CARRIED, and the reason this check exists.
+// A yaml list item `- ucx_info -d | grep -q "Transport: posix"` decodes to a
+// one-key MAPPING, because the `: ` inside the quotes splits it: the key ends
+// at `"Transport` and the value begins `posix"`. buildscript.scriptItem then
+// finds no `run`, renderRun(nil) hits its default arm, and the WHOLE block is
+// refused — while the recipe parses perfectly and `lint` without this flag is
+// green.
+func TestLintRenderScriptsCatchesAMapThatShouldHaveBeenACommand(t *testing.T) {
+	files := map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n" +
+			"test {\n  script = [\n    \"ucx_info -v\",\n" +
+			"    { \"ucx_info -d | grep -q \\\"Transport\" = \"posix\\\"\" },\n  ]\n}\n",
+	}
+	// Without the flag the recipe is readable and nothing complains, which is
+	// exactly how this survived: parsing and rendering are different questions.
+	if rc, _, errb := lint(t, "--dir", lintTree(t, files)); rc != 0 {
+		t.Fatalf("the recipe parses; without the flag there is nothing to say: rc=%d\n%s", rc, errb)
+	}
+	rc, out, errb := lint(t, "--dir", lintTree(t, files), "--render-scripts")
+	if rc != 1 {
+		t.Fatalf("an unrenderable script block must fail: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(out, "1 recipe(s) read") {
+		t.Errorf("the denominator is missing:\n%s", out)
+	}
+	for _, want := range []string{"a.org: test:", "needs a `run` string or list"} {
+		if !strings.Contains(errb, want) {
+			t.Errorf("the refusal must say %q:\n%s", want, errb)
+		}
+	}
+}
+
+// The repaired form — the one upstream's own check_tls.sh uses — must pass.
+func TestLintRenderScriptsPassesTheRepairedForm(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n" +
+			"test {\n  script = [\n    \"ucx_info -v\",\n" +
+			"    \"ucx_info -d | grep -q \\\"Transport: posix\\\"\",\n  ]\n}\n",
+	})
+	if rc, _, errb := lint(t, "--dir", dir, "--render-scripts"); rc != 0 {
+		t.Fatalf("a script of plain strings must render: rc=%d\n%s", rc, errb)
+	}
+}
+
+// ⛔ BOTH BLOCKS ARE JUDGED, not only `test`. A build script is the one whose
+// failure costs an artifact, so a check that looked at tests alone would be
+// the weaker half of this.
+func TestLintRenderScriptsJudgesBuildAndTestAlike(t *testing.T) {
+	bad := "{ \"cmd | grep -q \\\"K\" = \"V\\\"\" },\n"
+	buildOnly := lintTree(t, map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n" +
+			"build {\n  script = [\n    " + bad + "  ]\n}\n",
+	})
+	rc, _, errb := lint(t, "--dir", buildOnly, "--render-scripts")
+	if rc != 1 || !strings.Contains(errb, "a.org: build:") {
+		t.Errorf("a build script must be judged too: rc=%d\n%s", rc, errb)
+	}
+	testOnly := lintTree(t, map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n" +
+			"test {\n  script = [\n    " + bad + "  ]\n}\n",
+	})
+	rc, _, errb = lint(t, "--dir", testOnly, "--render-scripts")
+	if rc != 1 || !strings.Contains(errb, "a.org: test:") {
+		t.Errorf("a test script must be judged too: rc=%d\n%s", rc, errb)
+	}
+}
+
+// A recipe with no script at all is not a finding: most of the overlay states
+// no `build` block, and a check that counted those would report 195 findings
+// and be switched off the same hour.
+func TestLintRenderScriptsIgnoresARecipeWithNoScript(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n",
+		"b.org/package.hcl": "build {\n  dependencies = { \"zlib.net\" = \"*\" }\n}\n",
+	})
+	if rc, _, errb := lint(t, "--dir", dir, "--render-scripts"); rc != 0 {
+		t.Fatalf("no script is not an unrenderable script: rc=%d\n%s", rc, errb)
+	}
+}
+
+// ⛔ A moustache must NOT be an error. The renderer is given zero Options here,
+// so `{{prefix}}` stays literal — if that were treated as a failure the flag
+// would refuse almost every recipe in the tree.
+func TestLintRenderScriptsLeavesAMoustacheAlone(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n" +
+			"build {\n  script = [\n    \"make install PREFIX={{prefix}}\",\n" +
+			"    \"test -f {{prefix}}/lib/libx.so\",\n  ]\n}\n",
+	})
+	if rc, _, errb := lint(t, "--dir", dir, "--render-scripts"); rc != 0 {
+		t.Fatalf("an unexpanded moustache is not a defect: rc=%d\n%s", rc, errb)
+	}
+}
+
 // provRatchetTree is two recipes that record no provenance and one that does,
 // so a ceiling of 2 is the truth about it and 1 and 3 are the two ways of being
 // wrong. All three state a `distributable`, because a recipe that packages
