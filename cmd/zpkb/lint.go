@@ -91,6 +91,27 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	maxFragments := fset.Int("max-fragments", -1,
 		"with --require-standalone: the number of fragments this tree still has. "+
 			"More fails as a regression, FEWER fails as a ceiling to lower")
+	// ⛔⛔ --require-provenance NEEDED THE SAME THIRD OPTION, AND ITS OWN LANE
+	// SAID SO. go-zpkg/pantry-overlay's ci.yml carried, in a comment beside the
+	// step it did NOT add: "--require-provenance is NOT here yet. 14 of 216
+	// record none, and there is no ratchet for it, so turning it on would be the
+	// red light this avoids. It belongs here once those 14 are written or once it
+	// has a ceiling of its own."
+	//
+	// That is the gap this flag closes, and the choice between the two halves of
+	// that sentence is not a toss-up. Writing the 14 means reading fourteen
+	// projects' build systems — kernel.org/linux and llama.cpp among them — so
+	// "once those 14 are written" is a campaign, and until it ends NOTHING
+	// protects the 208 recipes that already record provenance. A new recipe
+	// landing without one is invisible today.
+	//
+	// Measured 2026-11-15 on the overlay at 097fc86, with the judge the lane
+	// runs (`zpkb@main`, v0.76.1-0.20261114072102-d2e01c8b0687) and with the
+	// v0.76.0 binary installed here — both answer 14 of 222, so the number below
+	// is not an artefact of which build asked.
+	maxNoProv := fset.Int("max-no-provenance", -1,
+		"with --require-provenance: the number of recipes in this tree that still record none. "+
+			"More fails as a regression, FEWER fails as a ceiling to lower")
 	if err := fset.Parse(args); err != nil {
 		return 2
 	}
@@ -101,6 +122,11 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	if *maxFragments >= 0 && !*requireStandalone {
 		fmt.Fprintln(stderr, "lint: --max-fragments is a ceiling on what "+
 			"--require-standalone counts, and does nothing without it")
+		return 2
+	}
+	if *maxNoProv >= 0 && !*requireProv {
+		fmt.Fprintln(stderr, "lint: --max-no-provenance is a ceiling on what "+
+			"--require-provenance counts, and does nothing without it")
 		return 2
 	}
 
@@ -168,6 +194,22 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"which it may exist at all (go-zpkg/packages#431):\n",
 			len(unrecorded), len(projects))
 		fmt.Fprintln(stderr, strings.Join(unrecorded, "\n"))
+		// Tolerated is never hidden: the recipes are still named above, and this
+		// says where the obligation now sits.
+		if *maxNoProv == len(unrecorded) {
+			fmt.Fprintf(stderr, "lint: at the stated ceiling of %d without provenance; "+
+				"each one written must lower it\n", *maxNoProv)
+		}
+	}
+	// Under the ceiling: the tree improved and the ceiling did not. Nothing is
+	// wrong with the recipes — the number in the lane is what needs the edit,
+	// and the message says which number to write.
+	if *maxNoProv > len(unrecorded) {
+		fmt.Fprintf(stderr, "lint: %d recipe(s) record no provenance, and "+
+			"--max-no-provenance says %d: lower it to %d. A ceiling nobody lowers stops "+
+			"describing the tree, and then a regression hides in the slack\n",
+			len(unrecorded), *maxNoProv, len(unrecorded))
+		return 1
 	}
 	// Under the ceiling: the tree improved and the ceiling did not. Reported on
 	// stdout as a success, because nothing is wrong with the recipes — the
@@ -198,8 +240,11 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// Reported after the unreadable ones, and a failure in its own right: a
-	// run that printed the list and exited 0 is a list nobody acts on.
-	if len(unrecorded) > 0 {
+	// run that printed the list and exited 0 is a list nobody acts on. At a
+	// STATED ceiling they are tolerated, which is what stating a number means;
+	// without --max-no-provenance the tolerance is zero, the stricter reading,
+	// and that stays the default.
+	if len(unrecorded) > 0 && *maxNoProv != len(unrecorded) {
 		return 1
 	}
 	// At or under a STATED ceiling the fragments are tolerated — that is what

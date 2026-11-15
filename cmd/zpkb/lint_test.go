@@ -524,3 +524,127 @@ func TestLintStandaloneTellsAStatedNullFromAnAbsentKey(t *testing.T) {
 		t.Errorf("the refusal must name the one key that is missing:\n%s", errb)
 	}
 }
+
+// provRatchetTree is two recipes that record no provenance and one that does,
+// so a ceiling of 2 is the truth about it and 1 and 3 are the two ways of being
+// wrong. All three state a `distributable`, because a recipe that packages
+// nothing of its own is exempt and would make the denominator a different
+// question.
+func provRatchetTree(t *testing.T) string {
+	t.Helper()
+	return lintTree(t, map[string]string{
+		"a.org/package.yml": "distributable:\n  url: https://a.org/x.tar.gz\n",
+		"b.org/package.yml": "distributable:\n  url: https://b.org/x.tar.gz\n",
+		"c.org/package.yml": "distributable:\n  url: https://c.org/x.tar.gz\n" +
+			"provenance:\n  read:\n    - configure\n  note: ./configure && make install\n",
+	})
+}
+
+// ⛔⛔ THE LANE THAT NEEDED THIS SAID SO IN A COMMENT BESIDE THE STEP IT DID NOT
+// ADD: "--require-provenance is NOT here yet. 14 of 216 record none, and there
+// is no ratchet for it, so turning it on would be the red light this avoids."
+// A stated number is the third option, exactly as it was for --max-fragments.
+func TestLintProvenanceRatchetAcceptsTheStatedNumber(t *testing.T) {
+	rc, out, errb := lint(t, "--dir", provRatchetTree(t), "--require-provenance", "--max-no-provenance", "2")
+	if rc != 0 {
+		t.Fatalf("at the stated ceiling the run must pass: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(out, "3 recipe(s) read") {
+		t.Errorf("the denominator is missing: %q", out)
+	}
+	// Tolerated is not hidden: the recipes are still named, and the message says
+	// the ceiling is where the obligation now sits.
+	for _, want := range []string{"a.org", "b.org", "at the stated ceiling of 2 without provenance"} {
+		if !strings.Contains(errb, want) {
+			t.Errorf("a tolerated recipe must still be named (%q):\n%s", want, errb)
+		}
+	}
+	if strings.Contains(errb, "c.org") {
+		t.Errorf("the recipe that records provenance must not be listed:\n%s", errb)
+	}
+}
+
+// One more than the stated number is a regression, and must fail.
+func TestLintProvenanceRatchetRefusesARegression(t *testing.T) {
+	rc, _, errb := lint(t, "--dir", provRatchetTree(t), "--require-provenance", "--max-no-provenance", "1")
+	if rc != 1 {
+		t.Fatalf("2 unrecorded against a ceiling of 1 must fail: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(errb, "2 of 3 recipe(s) record no provenance") {
+		t.Errorf("the refusal must give both numbers:\n%s", errb)
+	}
+}
+
+// ⛔⛔ AND FEWER THAN THE STATED NUMBER MUST FAIL TOO, which is what makes this
+// a ratchet rather than a budget: a ceiling nobody lowers stops describing the
+// tree, and a regression then hides inside the slack.
+func TestLintProvenanceRatchetRefusesAStaleCeiling(t *testing.T) {
+	rc, _, errb := lint(t, "--dir", provRatchetTree(t), "--require-provenance", "--max-no-provenance", "3")
+	if rc != 1 {
+		t.Fatalf("a ceiling above the truth must fail: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(errb, "lower it to 2") {
+		t.Errorf("the refusal must say what to write instead:\n%s", errb)
+	}
+}
+
+// Zero tolerated is a real answer and stays the default: --require-provenance
+// alone is the strict reading, and a ceiling of 0 says so explicitly.
+func TestLintProvenanceRatchetZeroIsNotUnset(t *testing.T) {
+	clean := lintTree(t, map[string]string{
+		"c.org/package.yml": "distributable:\n  url: https://c.org/x.tar.gz\n" +
+			"provenance:\n  read:\n    - configure\n  note: ./configure && make install\n",
+	})
+	if rc, _, errb := lint(t, "--dir", clean, "--require-provenance", "--max-no-provenance", "0"); rc != 0 {
+		t.Fatalf("a tree that records provenance everywhere must pass a ceiling of 0: rc=%d\n%s", rc, errb)
+	}
+	if rc, _, _ := lint(t, "--dir", provRatchetTree(t), "--require-provenance", "--max-no-provenance", "0"); rc != 1 {
+		t.Error("a ceiling of 0 must refuse an unrecorded recipe, not read as unset")
+	}
+}
+
+// ⛔ A FLAG THAT SILENTLY DOES NOTHING IS WORSE THAN A MISSING ONE: a lane that
+// stated a ceiling without the check would record a number nobody reads, and
+// look protected.
+func TestLintProvenanceRatchetNeedsTheCheckItBounds(t *testing.T) {
+	rc, _, errb := lint(t, "--dir", provRatchetTree(t), "--max-no-provenance", "2")
+	if rc != 2 {
+		t.Fatalf("want a usage error, got rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(errb, "does nothing without it") {
+		t.Errorf("the refusal must say why:\n%s", errb)
+	}
+}
+
+// ⛔⛔ THE TWO RATCHETS MUST NOT ANSWER FOR EACH OTHER. Both checks share one
+// run and one exit status, so a tree sitting exactly at one ceiling while
+// regressing against the other is the case where a single `return` would let
+// the satisfied gate speak for the broken one. Run as a PAIR, each direction
+// once, because a one-sided test passes against a check that is wrong both ways.
+func TestLintTheTwoRatchetsAreIndependent(t *testing.T) {
+	// Two recipes with no provenance; the one that records it is also the only
+	// one that stands alone, so fragments = 2 and unrecorded = 2 in one tree.
+	dir := lintTree(t, map[string]string{
+		"a.org/package.yml": "distributable:\n  url: https://a.org/x.tar.gz\n",
+		"b.org/package.yml": "distributable:\n  url: https://b.org/x.tar.gz\n",
+		"c.org/package.yml": "versions:\n  github: c/c\n" +
+			"distributable:\n  url: https://c.org/{{version}}.tar.gz\n" +
+			"build:\n  script: make install\n" +
+			"provenance:\n  read:\n    - configure\n  note: ./configure && make install\n",
+	})
+	both := []string{"--dir", dir, "--require-provenance", "--require-standalone"}
+	if rc, _, errb := lint(t, append(both, "--max-no-provenance", "2", "--max-fragments", "2")...); rc != 0 {
+		t.Fatalf("both ceilings stated truthfully must pass: rc=%d\n%s", rc, errb)
+	}
+	// Provenance at its ceiling, fragments regressing: the fragment gate must
+	// still fail the run.
+	rc, _, errb := lint(t, append(both, "--max-no-provenance", "2", "--max-fragments", "1")...)
+	if rc != 1 {
+		t.Errorf("a fragment regression must fail even with provenance at its ceiling: rc=%d\n%s", rc, errb)
+	}
+	// And the other way round.
+	rc, _, errb = lint(t, append(both, "--max-no-provenance", "1", "--max-fragments", "2")...)
+	if rc != 1 {
+		t.Errorf("a provenance regression must fail even with fragments at their ceiling: rc=%d\n%s", rc, errb)
+	}
+}
