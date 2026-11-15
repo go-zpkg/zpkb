@@ -1,33 +1,47 @@
-// Command bk is the pure-Go brewkit — a from-scratch reimplementation of
-// pkgx's build tool that is Target≠Host by design (first-class cross-compile,
-// notably Windows PE artifacts built on a linux/darwin host).
+// Command zpkb is a pure-Go recipe build tool, written from scratch and
+// Target≠Host by design (first-class cross-compile, notably Windows PE
+// artifacts built on a linux/darwin host).
+//
+// ⛔ IT IS NOT "a brewkit". That word is pkgx's name for its own build tool and
+// carries its imagery; this command reads a recipe, builds it in a zpkx
+// environment, relocates the install tree and packages an artifact, and those
+// are the words for what it does. pkgx's brewkit is credited in the README's
+// bibliography, where naming it is the point.
+//
+// ⛔ AND THE COMMAND IS `zpkb`, NOT `bk`. Every line below said `bk` until
+// 2026-11-15 — the whole published godoc page told a reader to run a binary
+// that no longer exists. The rename was deliberate and `version_test.go` holds
+// the reason: `bk` is now free for upstream's brewkit to sit on the same PATH,
+// which is also why `BREWKIT_TARGET` is not read and `ZPKB_TARGET` is
+// (target.go). A renamed command whose own documentation keeps the old name is
+// the generation nobody updated.
 //
 // This entrypoint currently exposes the pieces implemented so far:
 //
-//	bk target            print the resolved build target (honours ZPKB_TARGET / --platform)
-//	bk fixup <prefix>    run the post-build relocatability fix-ups on an install prefix
-//	bk versions          list a recipe's candidate versions
-//	bk build             build a recipe into an artifact
-//	bk publish           push a built artifact to an OCI registry
-//	bk closure           print a project set's transitive runtime closure (topological)
-//	bk catalog           build (and publish, signed) the catalogue pkgx ls
+//	zpkbtarget            print the resolved build target (honours ZPKB_TARGET / --platform)
+//	zpkbfixup <prefix>    run the post-build relocatability fix-ups on an install prefix
+//	zpkbversions          list a recipe's candidate versions
+//	zpkbbuild             build a recipe into an artifact
+//	zpkbpublish           push a built artifact to an OCI registry
+//	zpkbclosure           print a project set's transitive runtime closure (topological)
+//	zpkbcatalog           build (and publish, signed) the catalogue pkgx ls
 //	                     and <TAB> read
-//	bk runlog            read a factory job log: counts, stages, and whether
-//	                     the parse agrees with bk's own totals
-//	bk lock              resolve a set to the versions it means today, write them down, and --check them later
+//	zpkbrunlog            read a factory job log: counts, stages, and whether
+//	                     the parse agrees with zpkb's own totals
+//	zpkblock              resolve a set to the versions it means today, write them down, and --check them later
 //	                     (-runnable pins what is PUBLISHED, so `zpkx --lock` can run the file)
-//	bk factory           build a recipe set's whole closure and publish every artifact
-//	bk source            fetch the source a published artifact attests it was built from
-//	bk vulnid            say, per project, the name a vulnerability database will
+//	zpkbfactory           build a recipe set's whole closure and publish every artifact
+//	zpkbsource            fetch the source a published artifact attests it was built from
+//	zpkbvulnid            say, per project, the name a vulnerability database will
 //	                     accept — derived from the recipe, or declared in a table
-//	bk advisories        validate a tree of per-project advisory records and say
+//	zpkbadvisories        validate a tree of per-project advisory records and say
 //	                     what state each one is in
-//	bk vulnfetch         ask OSV what it knows about a pantry, in one request,
+//	zpkbvulnfetch         ask OSV what it knows about a pantry, in one request,
 //	                     and (with -write) record it as dated detections
-//	bk eol               whether a version is on an upstream release line that
+//	zpkbeol               whether a version is on an upstream release line that
 //	                     is still supported — the question OSV cannot answer,
 //	                     because an abandoned line has no advisories YET
-//	bk attest            say what a PUBLISHED artifact carries — SBOM, provenance,
+//	zpkbattest            say what a PUBLISHED artifact carries — SBOM, provenance,
 //	                     signature, OpenVEX — and --require it
 package main
 
@@ -48,10 +62,10 @@ import (
 	"github.com/go-zpkg/zpkb/target"
 )
 
-// trustEmbeddedCAs makes every HTTPS call bk performs — version listings, source
-// downloads, go-git clones — trust the Mozilla bundle artifact embeds, on top of
-// the system store. A FROM-scratch builder image has NO system trust store, so
-// without this bk cannot even list a version there:
+// trustEmbeddedCAs makes every HTTPS call zpkb performs — version listings,
+// source downloads, go-git clones — trust the Mozilla bundle artifact embeds,
+// on top of the system store. A FROM-scratch builder image has NO system trust
+// store, so without this zpkb cannot even list a version there:
 //
 //	versions: ls-remote https://github.com/lz4/lz4: tls: failed to verify
 //	certificate: x509: certificate signed by unknown authority
@@ -84,7 +98,7 @@ var osExit = os.Exit
 
 func main() {
 	trustEmbeddedCAs()
-	// Multi-call ("busybox-style") dispatch: bk is materialised into a build's
+	// Multi-call ("busybox-style") dispatch: zpkb is materialised into a build's
 	// libexec dir as symlinks named after brewkit shims. When a recipe execs one
 	// (e.g. `fix-shebangs.ts bin/*`), argv[0] is the symlink path, so its
 	// basename selects the pure-Go helper — no shell interpreter is involved.
@@ -122,9 +136,17 @@ func main() {
 // printVersion writes the one line both spellings produce.
 //
 // It prints exactly what bkVersion() returns — WITH the leading "v" — because
-// that is the string bk writes into a lock's `bk = "…"` field. A prettier
+// that is the string zpkb writes into a lock's `bk = "…"` field. A prettier
 // rendering here would make the two disagree, and the whole use of this
-// command is reading a lock and asking "do I have that bk?".
+// command is reading a lock and asking "do I have that version?".
+//
+// ⛔ THE FIELD IS SPELLED `bk` AND MUST STAY THAT WAY. It is a published data
+// format: every lock already written carries that key, and renaming it to
+// match the command would make this tool unable to read its own output. The
+// COMMAND was renamed; the field was not, and the two are different kinds of
+// name. A sweep that replaced `bk` with `zpkb` everywhere would break every
+// existing lock — which is why this says so here rather than leaving the next
+// reader to guess.
 //
 // There is no -ldflags stamp. The siblings inject `-X main.version=<tag>`,
 // which can be set to anything regardless of what was compiled; this reads
@@ -145,17 +167,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	// ⛔ BOTH SPELLINGS, BECAUSE NEITHER WORKED. Measured 2026-10-09:
+	// ⛔ BOTH SPELLINGS, BECAUSE NEITHER WORKED. Measured 2026-10-09, when the
+	// binary was still called `bk` — ⚠ THE TRANSCRIPT BELOW IS VERBATIM AND
+	// MUST NOT BE RENAMED. It is what was typed and what came back; rewriting
+	// it to say `zpkb` would make the record describe a run that never
+	// happened. The command is `zpkb` now, and the measurement is still from
+	// the day it was not.
 	//
 	//	$ bk --version
 	//	flag provided but not defined: -version
 	//	$ bk version
 	//	unknown command: version
 	//
-	// bk could not say which bk it was, which matters more here than in its
-	// siblings: it writes its own version into every lock it produces
-	// (`bk = "v0.15.0"`), so "which bk wrote this lock" was a question only
-	// `go version -m` could answer, and only if you still had the binary.
+	// It could not say which build of itself it was, which matters more here
+	// than in its siblings: it writes its own version into every lock it
+	// produces (`bk = "v0.15.0"`), so "which build wrote this lock" was a
+	// question only `go version -m` could answer, and only if you still had
+	// the binary.
 	//
 	// The flag form is parsed BEFORE the empty-args check so that
 	// `bk --version` on its own is not a usage error.
@@ -173,9 +201,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// The TARGET is resolved by the two subcommands that use one, not before
-	// the switch. Resolving it here meant `bk lint`, `bk overrides` and `bk
-	// tohcl` — none of which builds anything — refused to run on a machine
-	// whose ZPKB_TARGET named a platform bk does not support:
+	// the switch. Resolving it here meant `zpkb lint`, `zpkb overrides` and
+	// `zpkb tohcl` — none of which builds anything — refused to run on a
+	// machine whose ZPKB_TARGET named a platform zpkb does not support:
 	//
 	//	error: unsupported target platform: "plan9"
 	//
