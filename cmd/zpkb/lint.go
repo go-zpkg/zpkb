@@ -71,6 +71,31 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// fragments, right up until it is asked to be the base.
 	requireStandalone := fset.Bool("require-standalone", false,
 		"fail a recipe that cannot resolve alone — one that needs another recipe merged underneath it")
+	// ⛔⛔ HCL IS THE ONLY FORM OUR OWN RECIPES TAKE — a decision, taken by the
+	// project's owner on 2026-11-15: "nous n'avons plus besoin YAML, on fait
+	// tout en hcl". go-zpkg/pantry-overlay reached it the same morning: 222
+	// package.hcl and zero package.yml.
+	//
+	// A STATED RULE WITH NOTHING ENFORCING IT IS A RULE THAT GETS BROKEN, and
+	// this one is unusually easy to break by accident: `package.yml` is still a
+	// name the loader reads, by design, so a yaml recipe added to our tree
+	// works perfectly and nothing says it should not be there. The next person
+	// converting an upstream recipe has every reason to paste the yaml first
+	// and mean to convert it later.
+	//
+	// ⛔ PER TREE, like its two neighbours, and for the same reason: upstream's
+	// pantry IS yaml and must stay readable — `PantryBase` is still
+	// pkgxdev/pantry and 195 of our 222 recipes resolve only because it is
+	// merged underneath. A schema rule would refuse the corpus we still depend
+	// on. A requirement about OUR files belongs to the invocation pointed at
+	// our files.
+	//
+	// ⭐ NO RATCHET, DELIBERATELY. --max-fragments and --max-no-provenance
+	// exist because their checks could not be switched on at zero; this one is
+	// at zero ALREADY, so a stated ceiling would be slack where none is needed.
+	// Zero is the stricter answer and it is available.
+	requireHCL := fset.Bool("require-hcl", false,
+		"fail a recipe that is not written in HCL — our own trees hold package.hcl only")
 	// ⛔⛔ A GATE THAT STARTS RED IS NOT A GATE, IT IS A LIGHT NOBODY READS, and
 	// pantry-overlay's own ci.yml carries that lesson already: its lint step
 	// invoked a module path that no longer existed, so every pull request after
@@ -131,11 +156,19 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	}
 
 	root := filepath.Join(*dir, *sub)
-	projects, err := lintProjects(root)
+	// One walk, and the file NAMES come back with it: --require-hcl judges the
+	// names, every other check judges the content, and both must be talking
+	// about the same tree.
+	recipeFiles, err := lintRecipeFiles(root)
 	if err != nil {
 		fmt.Fprintf(stderr, "lint: %v\n", err)
 		return 1
 	}
+	projects := make([]string, 0, len(recipeFiles))
+	for proj := range recipeFiles {
+		projects = append(projects, proj)
+	}
+	sort.Strings(projects)
 	// An empty tree is a FAILURE, not a pass. A sweep that could not find its
 	// corpus reports the same "no problems" as one that read it all, and the
 	// one thing that distinguishes them is saying how many were read.
@@ -173,6 +206,27 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "%d recipe(s) read from %s\n", len(projects), root)
+	// Judged on the NAMES, from the same walk that produced the count above. A
+	// directory holding both forms is named too: the loader would prefer the
+	// HCL and the yaml would sit there unread, which is the state this refuses.
+	var notHCL []string
+	if *requireHCL {
+		for _, proj := range projects {
+			for _, name := range recipeFiles[proj] {
+				if name != hclRecipeName {
+					notHCL = append(notHCL, fmt.Sprintf("  %s: %s", proj, name))
+				}
+			}
+		}
+	}
+	if len(notHCL) > 0 {
+		sort.Strings(notHCL)
+		fmt.Fprintf(stderr, "%d recipe file(s) of %d project(s) are not %s — our own trees hold "+
+			"HCL only, and `zpkb tohcl` DROPS EVERY COMMENT, so a conversion is read and "+
+			"rewritten by a person rather than piped (go-zpkg/pantry-overlay):\n",
+			len(notHCL), len(projects), hclRecipeName)
+		fmt.Fprintln(stderr, strings.Join(notHCL, "\n"))
+	}
 	// ⛔⛔ UNCONDITIONAL, AND THE ONLY CHECK HERE THAT IS. The others ask about
 	// a tree's completeness, which is a campaign; this one asks whether a
 	// recipe states something that CANNOT be true, and a flag for it would be
@@ -253,8 +307,20 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	if len(fragments) > 0 && *maxFragments != len(fragments) {
 		return 1
 	}
+	// No tolerance and no ceiling, for the reason given where the flag is
+	// declared: this check is at zero already.
+	if len(notHCL) > 0 {
+		return 1
+	}
 	return 0
 }
+
+// hclRecipeName is the one recipe file name our own trees carry. It is a
+// LITERAL rather than recipefile.Names[0] on purpose: indexing a list would
+// make this gate's meaning depend on that list's ORDER, so reordering it — a
+// change with no other consequence — would silently start accepting yaml.
+// TestTheHCLNameIsARecipeName keeps the literal honest against the loader.
+const hclRecipeName = "package.hcl"
 
 // essentials are the keys a recipe must STATE to stand on its own: where its
 // versions come from, where its content comes from, and how to turn that into a
@@ -336,7 +402,30 @@ func missingEssentials(doc map[string]any) []string {
 // because of where it sits: the pantry nests them (x.org/protocol/xcb), so
 // depth says nothing.
 func lintProjects(root string) ([]string, error) {
-	var out []string
+	byProject, err := lintRecipeFiles(root)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(byProject))
+	for proj := range byProject {
+		out = append(out, proj)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// lintRecipeFiles is the ONE walk, and it reports which recipe FILE NAMES each
+// project holds rather than only that it is a project. --require-hcl needs the
+// names; a second walk beside this one would be two readings of one tree, and
+// the day they disagreed the count and the verdict would come from different
+// corpora.
+//
+// A project may hold MORE THAN ONE name: a directory with both package.hcl and
+// package.yml is legal, and recipefile.Load prefers the HCL. That is precisely
+// the case --require-hcl must still refuse, so every name is kept rather than
+// the one the loader would pick.
+func lintRecipeFiles(root string) (map[string][]string, error) {
+	out := map[string][]string{}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -354,7 +443,8 @@ func lintProjects(root string) ([]string, error) {
 		if dir == base {
 			return nil
 		}
-		out = append(out, strings.TrimPrefix(dir, base+"/"))
+		proj := strings.TrimPrefix(dir, base+"/")
+		out[proj] = append(out[proj], d.Name())
 		return nil
 	})
 	if err != nil {
@@ -363,6 +453,8 @@ func lintProjects(root string) ([]string, error) {
 		}
 		return nil, err
 	}
-	sort.Strings(out)
+	for proj := range out {
+		sort.Strings(out[proj])
+	}
 	return out, nil
 }
