@@ -1,4 +1,4 @@
-# zpkb — a pure-Go brewkit
+# zpkb — a pure-Go recipe build tool
 
 `zpkb` is a `CGO_ENABLED=0` build tool written from scratch in Go. It reads a
 recipe, builds the package in a zpkx environment, relocates the install tree,
@@ -18,7 +18,7 @@ spec. Each entry is credited where it is used, below.
 still read, tried second, and is on its way out with the rest of the pkgx
 compatibility — see [the pantry question](https://github.com/go-zpkg/packages/issues/431).
 
-A *native* build tool — brewkit among them — pivots on the host it runs on
+A *native* build tool — pkgx's brewkit among them — pivots on the host it runs on
 being the thing it builds for. `zpkb` is **Target ≠ Host by design**: the
 build target (platform/arch/triple) is a first-class value, so cross-compilation —
 notably **Windows PE artifacts built on a linux/darwin host** — is a supported path
