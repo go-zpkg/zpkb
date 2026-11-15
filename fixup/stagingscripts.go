@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// fixStagingScripts strips the +brewing staging prefix out of the scripts a
+// fixStagingScripts strips the +builddir staging prefix out of the scripts a
 // build installs.
 //
 // A recipe configures with the staging prefix, so anything the build bakes into
@@ -15,9 +15,9 @@ import (
 // registry:
 //
 //	openssl.org/v3.0.19/bin/c_rehash:
-//	  my $dir = "…/openssl.org/v3.0.19+brewing/ssl";
+//	  my $dir = "…/openssl.org/v3.0.19+builddir/ssl";
 //	perl.org/v5.28.0/bin/perlivp:
-//	  my $perlpath = '…/perl.org/v5.28.0+brewing/bin/perl';
+//	  my $perlpath = '…/perl.org/v5.28.0+builddir/bin/perl';
 //
 // Neither directory exists anywhere, on any machine, including the one that
 // built it. Pointing them at the final prefix does not make the artifact

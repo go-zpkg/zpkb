@@ -485,7 +485,7 @@ func TestCheckRefExistsAcceptsAReferenceThatResolves(t *testing.T) {
 }
 
 // And the staging half of the same condition: during a build the package's own
-// files are still under <prefix>+brewing, so a reference into its own tree
+// files are still under <prefix>+builddir, so a reference into its own tree
 // resolves only through staged().
 func TestCheckRefExistsAcceptsAReferenceUnderTheStagingPrefix(t *testing.T) {
 	zpkx := t.TempDir()

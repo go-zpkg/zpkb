@@ -55,7 +55,7 @@ func TestComputeDefaultLayout(t *testing.T) {
 	if p.Install != filepath.FromSlash("/opt/pkgx/acme.org/tool/v1.2.3-habcdefghijklmnop") {
 		t.Errorf("Install = %q", p.Install)
 	}
-	if p.BuildInstall != p.Install+"+brewing" {
+	if p.BuildInstall != p.Install+"+builddir" {
 		t.Errorf("BuildInstall = %q", p.BuildInstall)
 	}
 	// keyed on the TARGET platform+arch

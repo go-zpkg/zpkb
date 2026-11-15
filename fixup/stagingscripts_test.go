@@ -9,12 +9,12 @@ import (
 )
 
 // TestFixStagingScripts uses the real shapes found in the published registry:
-// openssl's c_rehash and perl's perlivp both bake the +brewing staging path,
+// openssl's c_rehash and perl's perlivp both bake the +builddir staging path,
 // which exists on no machine at all once the tree is staged.
 func TestFixStagingScripts(t *testing.T) {
 	dir := t.TempDir()
 	prefix := filepath.Join(dir, "openssl.org", "v3.0.19")
-	staging := prefix + "+brewing"
+	staging := prefix + "+builddir"
 	mustMkdir(t, filepath.Join(prefix, "bin"))
 	mustMkdir(t, filepath.Join(prefix, "libexec", "nested"))
 
@@ -36,13 +36,13 @@ func TestFixStagingScripts(t *testing.T) {
 	}
 
 	got := read(t, rehash)
-	if strings.Contains(got, "+brewing") {
+	if strings.Contains(got, "+builddir") {
 		t.Errorf("the staging prefix survived in c_rehash:\n%s", got)
 	}
 	if !strings.Contains(got, prefix+"/ssl") {
 		t.Errorf("c_rehash does not point at the final prefix:\n%s", got)
 	}
-	if g := read(t, nested); strings.Contains(g, "+brewing") {
+	if g := read(t, nested); strings.Contains(g, "+builddir") {
 		t.Errorf("a nested script was not visited:\n%s", g)
 	}
 	if g := read(t, binary); g != elf {
@@ -73,33 +73,33 @@ func TestFixStagingScriptsErrors(t *testing.T) {
 	dir := t.TempDir()
 	prefix := filepath.Join(dir, "p")
 	mustMkdir(t, filepath.Join(prefix, "bin"))
-	mustWrite(t, filepath.Join(prefix, "bin", "s"), "#!/bin/sh\n"+prefix+"+brewing/x\n", 0o755)
+	mustWrite(t, filepath.Join(prefix, "bin", "s"), "#!/bin/sh\n"+prefix+"+builddir/x\n", 0o755)
 
 	boom := errors.New("boom")
 	t.Run("readdir", func(t *testing.T) {
 		defer restoreReadDir(osReadDir)
 		osReadDir = func(string) ([]os.DirEntry, error) { return nil, boom }
-		if err := fixStagingScripts(prefix, prefix+"+brewing", nil); !errors.Is(err, boom) {
+		if err := fixStagingScripts(prefix, prefix+"+builddir", nil); !errors.Is(err, boom) {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("readfile", func(t *testing.T) {
 		defer restoreReadFile(osReadFile)
 		osReadFile = func(string) ([]byte, error) { return nil, boom }
-		if err := fixStagingScripts(prefix, prefix+"+brewing", nil); !errors.Is(err, boom) {
+		if err := fixStagingScripts(prefix, prefix+"+builddir", nil); !errors.Is(err, boom) {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("write", func(t *testing.T) {
 		defer restoreWriteFile(osWriteFile)
 		osWriteFile = func(string, []byte, os.FileMode) error { return boom }
-		if err := fixStagingScripts(prefix, prefix+"+brewing", func(string, ...any) {}); !errors.Is(err, boom) {
+		if err := fixStagingScripts(prefix, prefix+"+builddir", func(string, ...any) {}); !errors.Is(err, boom) {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("nested dir", func(t *testing.T) {
 		mustMkdir(t, filepath.Join(prefix, "bin", "sub"))
-		mustWrite(t, filepath.Join(prefix, "bin", "sub", "s"), "#!/bin/sh\n"+prefix+"+brewing/x\n", 0o755)
+		mustWrite(t, filepath.Join(prefix, "bin", "sub", "s"), "#!/bin/sh\n"+prefix+"+builddir/x\n", 0o755)
 		calls := 0
 		defer restoreReadDir(osReadDir)
 		real := osReadDir
@@ -110,7 +110,7 @@ func TestFixStagingScriptsErrors(t *testing.T) {
 			}
 			return real(p)
 		}
-		if err := fixStagingScripts(prefix, prefix+"+brewing", func(string, ...any) {}); !errors.Is(err, boom) {
+		if err := fixStagingScripts(prefix, prefix+"+builddir", func(string, ...any) {}); !errors.Is(err, boom) {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -165,7 +165,7 @@ func TestFixUpPropagatesStagingScriptError(t *testing.T) {
 	dir := t.TempDir()
 	prefix := filepath.Join(dir, "p", "v1")
 	mustMkdir(t, filepath.Join(prefix, "bin"))
-	mustWrite(t, filepath.Join(prefix, "bin", "s"), "#!/bin/sh\n"+prefix+"+brewing/x\n", 0o755)
+	mustWrite(t, filepath.Join(prefix, "bin", "s"), "#!/bin/sh\n"+prefix+"+builddir/x\n", 0o755)
 
 	boom := errors.New("boom")
 	defer restoreWriteFile(osWriteFile)
@@ -173,7 +173,7 @@ func TestFixUpPropagatesStagingScriptError(t *testing.T) {
 
 	err := FixUp(Options{
 		Prefix:       prefix,
-		BuildInstall: prefix + "+brewing",
+		BuildInstall: prefix + "+builddir",
 		Platform:     "linux",
 		Skips:        []string{"fix-patchelf"},
 	})

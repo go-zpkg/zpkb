@@ -217,14 +217,14 @@ func checkSlots(t *testing.T, path string, o sigOpts, img signedImage) {
 // message at all. After a rewrite the slots must cover what is now on disk.
 func TestRewriteResignsWhatItChanged(t *testing.T) {
 	o := sigOpts{}
-	img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", o)
+	img := buildSignedMachO(t, "/opt/x/v1+builddir/lib", o)
 	p := writeImage(t, img)
 	before, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := RewriteMachoStrings(p, func(s string) string {
-		return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+		return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -283,10 +283,10 @@ func TestResignHashTypes(t *testing.T) {
 		{"alternate directories", sigOpts{hashType: csHashSHA256, hashSize: sha256.Size, nCDs: 2}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", tc.o)
+			img := buildSignedMachO(t, "/opt/x/v1+builddir/lib", tc.o)
 			p := writeImage(t, img)
 			if err := RewriteMachoStrings(p, func(s string) string {
-				return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+				return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -332,11 +332,11 @@ func TestMalformedSignatureRefused(t *testing.T) {
 		}, ErrBadSignature, "SuperBlob claims"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", sigOpts{})
+			img := buildSignedMachO(t, "/opt/x/v1+builddir/lib", sigOpts{})
 			tc.break_(&img)
 			p := writeImage(t, img)
 			err := RewriteMachoStrings(p, func(s string) string {
-				return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+				return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 			})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
@@ -372,11 +372,11 @@ func TestSliceErrNamesTheSliceOnlyInAFatBinary(t *testing.T) {
 // An unknown hash algorithm is refused by name rather than skipped: skipping
 // would leave stale hashes behind, which is the outcome we cannot allow.
 func TestUnknownHashTypeRefused(t *testing.T) {
-	img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", sigOpts{})
+	img := buildSignedMachO(t, "/opt/x/v1+builddir/lib", sigOpts{})
 	img.raw[img.cdOff+37] = 99
 	p := writeImage(t, img)
 	err := RewriteMachoStrings(p, func(s string) string {
-		return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+		return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 	})
 	if err == nil {
 		t.Fatal("want an error for an algorithm we cannot compute")
@@ -389,9 +389,9 @@ func TestUnknownHashTypeRefused(t *testing.T) {
 // An unsigned Mach-O — most linux-built and older darwin objects — is rewritten
 // as before. Nothing to restate is not an error.
 func TestUnsignedMachOStillRewrites(t *testing.T) {
-	p := buildMachO(t, machoCmd{lcIDDylib, "/opt/x/v1+brewing/lib/libz.dylib"})
+	p := buildMachO(t, machoCmd{lcIDDylib, "/opt/x/v1+builddir/lib/libz.dylib"})
 	if err := RewriteMachoStrings(p, func(s string) string {
-		return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+		return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -407,11 +407,11 @@ func TestUnsignedMachOStillRewrites(t *testing.T) {
 // A blob that is not an embedded signature (a detached one, or a format we do
 // not know) is left alone rather than parsed as one.
 func TestForeignSignatureBlobLeftAlone(t *testing.T) {
-	img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", sigOpts{})
+	img := buildSignedMachO(t, "/opt/x/v1+builddir/lib", sigOpts{})
 	binary.BigEndian.PutUint32(img.raw[img.sigOff:], 0xfade0b01) // a CMS blob
 	p := writeImage(t, img)
 	if err := RewriteMachoStrings(p, func(s string) string {
-		return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+		return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -420,14 +420,14 @@ func TestForeignSignatureBlobLeftAlone(t *testing.T) {
 // LC_CODE_SIGNATURE can point past the end of the file — a truncated download,
 // or a load command we misread. Refuse rather than index into it.
 func TestSignatureOutOfBounds(t *testing.T) {
-	img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", sigOpts{})
+	img := buildSignedMachO(t, "/opt/x/v1+builddir/lib", sigOpts{})
 	le := binary.LittleEndian
 	// The LC_CODE_SIGNATURE dataoff sits right after the LC_RPATH command.
 	rpSize := int(le.Uint32(img.raw[36:]))
 	le.PutUint32(img.raw[32+rpSize+8:], uint32(len(img.raw)-4))
 	p := writeImage(t, img)
 	err := RewriteMachoStrings(p, func(s string) string {
-		return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+		return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 	})
 	if !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("err = %v, want ErrBadSignature", err)
@@ -439,14 +439,14 @@ func TestSignatureOutOfBounds(t *testing.T) {
 // one, and the directories beside it are still restated.
 func TestNonDirectoryBlobsAreSteppedOver(t *testing.T) {
 	o := sigOpts{nCDs: 2, hashType: csHashSHA256, hashSize: sha256.Size}
-	img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", o)
+	img := buildSignedMachO(t, "/opt/x/v1+builddir/lib", o)
 	// Turn the second directory into a requirements blob.
 	be := binary.BigEndian
 	second := img.sigOff + int(be.Uint32(img.raw[img.sigOff+12+8+4:]))
 	be.PutUint32(img.raw[second:], 0xfade0c01)
 	p := writeImage(t, img)
 	if err := RewriteMachoStrings(p, func(s string) string {
-		return string(bytes.ReplaceAll([]byte(s), []byte("+brewing"), nil))
+		return string(bytes.ReplaceAll([]byte(s), []byte("+builddir"), nil))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -495,13 +495,28 @@ func TestMachoSignatureStale(t *testing.T) {
 	t.Run("edited in place, unrepaired", func(t *testing.T) {
 		// The exact state every darwin artifact built before re-signing is in:
 		// the load command was rewritten and the hashes were left behind.
-		img := buildSignedMachO(t, "/opt/x/v1+brewing/lib", sigOpts{})
+		//
+		// ⛔⛔ THE PADDING IS COMPUTED, NOT COUNTED, and it had to be: this test
+		// used to write eight literal NUL bytes, which was exactly
+		// len("/opt/x/v1+brewing/lib") - len("/opt/x/v1/lib") — i.e. the length
+		// of the staging suffix, spelled nowhere. The 2026-11-15 rename went
+		// through `+build` (6 bytes, two SHORTER than `+brewing`) on the way to
+		// `+builddir`, and on that step the hand-counted eight wrote two NULs
+		// PAST the end of the string: the test stopped testing what it says and
+		// reported "an edited, unrepaired binary read as sound". gofmt and vet
+		// could not see it; only running it could. The final `+builddir` is one
+		// byte LONGER, where the same eight would have left a live byte of the
+		// old path behind instead — wrong in the other direction, and quiet,
+		// because a C string stops at the first NUL. A length tied to a string
+		// literal belongs in an expression, never in a count.
+		staged, final := "/opt/x/v1+builddir/lib", "/opt/x/v1/lib"
+		img := buildSignedMachO(t, staged, sigOpts{})
 		p := writeImage(t, img)
 		raw, err := os.ReadFile(p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		copy(raw[44:], "/opt/x/v1/lib\x00\x00\x00\x00\x00\x00\x00\x00")
+		copy(raw[44:], final+strings.Repeat("\x00", len(staged)-len(final)))
 		if err := os.WriteFile(p, raw, 0o755); err != nil {
 			t.Fatal(err)
 		}

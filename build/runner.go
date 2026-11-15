@@ -318,7 +318,7 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 	// why the second generation could not rebuild its own toolchain.
 	//
 	// Nothing is lost by keeping it: the build installs into BuildInstall
-	// (`+brewing`) and the rename at the end already removes paths.Install
+	// (`+builddir`) and the rename at the end already removes paths.Install
 	// immediately before replacing it. This one was redundant as well as
 	// destructive — and dropping it means a FAILED rebuild no longer destroys
 	// a working install, which is worth having on its own.
@@ -511,7 +511,7 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 		}
 		return res, fmt.Errorf("run: %w%s", err, buildDirListing(paths.Build, err))
 	}
-	// Stage the completed +brewing tree onto the final versioned prefix. The
+	// Stage the completed +builddir tree onto the final versioned prefix. The
 	// build and its install step have already succeeded; only this atomic rename
 	// remains. If the destination prefix already exists — the same version got
 	// built earlier in the dependency closure, or this is a re-run — it is a

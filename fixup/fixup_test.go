@@ -38,7 +38,7 @@ func TestWindowsSkipsEverything(t *testing.T) {
 
 func TestFixPCFiles(t *testing.T) {
 	prefix := t.TempDir()
-	build := prefix + "+brewing"
+	build := prefix + "+builddir"
 	pc := filepath.Join(prefix, "lib", "pkgconfig", "foo.pc")
 	write(t, pc, "prefix="+build+"\nlibdir="+prefix+"/lib\nCflags: -I"+prefix+"/include\n")
 	// a share/pkgconfig one too

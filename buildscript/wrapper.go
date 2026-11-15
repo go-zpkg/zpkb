@@ -407,7 +407,7 @@ func glibcLoader(arch string) (string, bool) {
 // is three levels for a two-segment project and two for a one-segment one, and
 // counting it by hand is how a wrong rpath gets shipped. A binary in bin/ or a
 // dylib in lib/ is one level below that; libexec/<sub>/ is one more, so both
-// are named. During the build the staging tree is <install>+brewing, the same
+// are named. During the build the staging tree is <install>+builddir, the same
 // depth, so the relative rpath resolves there too.
 func darwinRpaths(zpkgDir, install string) []string {
 	var out []string

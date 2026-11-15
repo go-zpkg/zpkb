@@ -54,9 +54,9 @@ import (
 //	~/.pkgx/gnu.org/findutils/v4.10.0/bin/updatedb holds sort="/usr/bin/sort -z"
 //	  — and `/usr/bin/sort` is not even GNU sort on a darwin builder
 //	~/.pkgx/gnu.org/findutils/v4.10.0/bin/updatedb also holds
-//	    : ${LOCATE_DB=/opt/gnu.org/findutils/v4.10.0+brewing/var/locate/locatedb}
-//	    : ${LIBEXECDIR=/opt/gnu.org/findutils/v4.10.0+brewing/libexec}
-//	    : ${BINDIR=/opt/gnu.org/findutils/v4.10.0+brewing/bin}
+//	    : ${LOCATE_DB=/opt/gnu.org/findutils/v4.10.0+builddir/var/locate/locatedb}
+//	    : ${LIBEXECDIR=/opt/gnu.org/findutils/v4.10.0+builddir/libexec}
+//	    : ${BINDIR=/opt/gnu.org/findutils/v4.10.0+builddir/bin}
 //	  — the STAGING tree, which does not exist after the artifact is installed,
 //	    so updatedb cannot find its own frcode. go-zpkg/zpkb#152's class, in a
 //	    script rather than an rpath.
@@ -78,7 +78,7 @@ type storePathHit struct {
 // bakedScan is what one tree says about itself.
 type bakedScan struct {
 	ByProject map[string][]storePathHit // rule A: <store>/<project>/v<ver>
-	Staging   []storePathHit            // rule B: anything under a +brewing tree
+	Staging   []storePathHit            // rule B: anything under a +builddir tree
 	Host      map[string][]storePathHit // rule C: absolute paths outside the store, keyed by the path
 	Files     int
 	ExecFiles int
@@ -89,10 +89,35 @@ type bakedScan struct {
 // ⛔ IT DOES NOT TAKE THE STORE ROOT, and that is the measured part: the
 // staging path found in a shipped artifact is rooted at /opt, while the machine
 // reading it has its store at ~/.pkgx. A rule anchored on the local store root
-// would have seen nothing. `+brewing` is zpkb's own staging suffix
+// would have seen nothing. `+builddir` is zpkb's own staging suffix
 // (buildscript/wrapper.go:384, fixup/macho.go:591), so the string is ours to
 // recognise anywhere it appears.
-var stagingPattern = regexp.MustCompile(`/[A-Za-z0-9._+/-]*\+brewing(?:/[A-Za-z0-9._+-]+)*`)
+//
+// ⛔⛔ THE SUFFIX WAS `+brewing` UNTIL 2026-11-15, and the change costs this rule
+// something that must be written down rather than discovered. `+brewing` was a
+// word nobody else uses, so matching it could not be wrong. The replacement had
+// to keep that property, and the first candidate did not: a bare `+build` is
+// ALSO what Go's legacy build-constraint syntax looks like (`// +build linux`),
+// and `+` is semver's build-metadata separator, so `1.2.3+build.1` would put the
+// suffix inside a version and this pattern would call a project's own version a
+// staging tree. `+builddir` was chosen over `+build` for exactly those two
+// reasons; it names what the thing is, a directory, and collides with neither.
+//
+// Measured before accepting it (probe package `tagprobe`, 2026-11-15): three
+// comment lines carrying `+builddir`, `+buildpath` and `+staging` are clean
+// under `gofmt -l` and `go vet`, while the positive control — a line reading
+// `// +build dir so the pipeline's rename works` — is reformatted by gofmt and
+// rejected by vet with "misplaced +build comment" and "invalid non-alphanumeric
+// build constraint". Across go-zpkg/pantry-overlay's 222 recipes, ZERO carry a
+// `+` in a version; with `+builddir` the semver collision needs a recipe to pin
+// literal build metadata spelled `builddir`, which nothing does. Should one ever
+// appear, the fix is to anchor on the INSTALL PREFIX's shape, not the suffix.
+//
+// The old spelling is deliberately NOT matched as well. Everything is being
+// republished, so no artifact we produce will carry `+brewing` afterwards; the
+// one place it survives is a comment in builder.go describing a MIRRORED
+// upstream glibc, whose loader has upstream's own staging path baked in.
+var stagingPattern = regexp.MustCompile(`/[A-Za-z0-9._+/-]*\+builddir(?:/[A-Za-z0-9._+-]+)*`)
 
 // hostToolPattern recognises an absolute path that is not in the store.
 //
@@ -331,7 +356,7 @@ func reportStorePaths(scan bakedScan, self string, allowed map[string]bool, cens
 	// every tree, for every consumer, with no case in which it is the intent.
 	if len(scan.Staging) > 0 {
 		sortHits(scan.Staging)
-		fmt.Fprintf(&b, "bakedpaths: %d reference(s) to a +brewing STAGING tree, which does not exist once this artifact is installed — measured in gnu.org/findutils v4.10.0, whose updatedb cannot find its own frcode (go-zpkg/zpkb#152):",
+		fmt.Fprintf(&b, "bakedpaths: %d reference(s) to a +builddir STAGING tree, which does not exist once this artifact is installed — measured in gnu.org/findutils v4.10.0, whose updatedb cannot find its own frcode (go-zpkg/zpkb#152):",
 			len(scan.Staging))
 		for _, h := range firstFew(scan.Staging, 5) {
 			fmt.Fprintf(&b, "\n      %s at +%d: %s", h.File, h.Offset, h.Path)

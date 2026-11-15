@@ -103,9 +103,9 @@ func SetInterp(path, value string) error {
 // ld.so, built with --prefix and therefore baked with the staging directory:
 //
 //	[Requesting program interpreter:
-//	   /home/linux1/.pkgx/gnu.org/glibc/v2.44+brewing/lib/glibc-2.44/ld64.so.1]
+//	   /home/linux1/.pkgx/gnu.org/glibc/v2.44+builddir/lib/glibc-2.44/ld64.so.1]
 //
-// Two things wrong in one string. `+brewing` is Paths.BuildInstall, which
+// Two things wrong in one string. `+builddir` is Paths.BuildInstall, which
 // exists during the build and nowhere after it. `/home/linux1` is the runner's
 // home: a published, signed artifact naming the account that made it.
 //
@@ -137,7 +137,7 @@ func fixInterp(opts Options) error {
 		want := opts.Prefix + strings.TrimPrefix(cur, opts.BuildInstall)
 		if err := SetInterp(exe, want); err != nil {
 			// ErrInterpNoSpace cannot happen for an unstaging rewrite — the
-			// result is shorter by the length of "+brewing" — but reporting
+			// result is shorter by the length of "+builddir" — but reporting
 			// beats a silent skip if the premise ever changes.
 			return err
 		}

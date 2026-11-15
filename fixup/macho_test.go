@@ -112,7 +112,7 @@ func buildFat(t *testing.T, fat64 bool, arches ...[]machoCmd) string {
 
 func TestIsMachOAndRead(t *testing.T) {
 	p := buildMachO(t,
-		machoCmd{lcIDDylib, "/opt/x/v1+brewing/lib/libz.dylib"},
+		machoCmd{lcIDDylib, "/opt/x/v1+builddir/lib/libz.dylib"},
 		machoCmd{lcLoadDylib, "/usr/lib/libSystem.B.dylib"},
 		machoCmd{lcRpath, "/opt/pkgx"},
 	)
@@ -120,7 +120,7 @@ func TestIsMachOAndRead(t *testing.T) {
 		t.Fatal("crafted Mach-O not recognised")
 	}
 	ss, err := ReadMachoStrings(p)
-	if err != nil || len(ss) != 3 || ss[0] != "/opt/x/v1+brewing/lib/libz.dylib" || ss[2] != "/opt/pkgx" {
+	if err != nil || len(ss) != 3 || ss[0] != "/opt/x/v1+builddir/lib/libz.dylib" || ss[2] != "/opt/pkgx" {
 		t.Fatalf("ReadMachoStrings = %v %v", ss, err)
 	}
 	// non-Mach-O
@@ -136,11 +136,11 @@ func TestIsMachOAndRead(t *testing.T) {
 
 func TestRewriteMachoStrings(t *testing.T) {
 	p := buildMachO(t,
-		machoCmd{lcIDDylib, "/opt/x/v1+brewing/lib/libz.dylib"},
+		machoCmd{lcIDDylib, "/opt/x/v1+builddir/lib/libz.dylib"},
 		machoCmd{lcRpath, "/opt/pkgx"},
 	)
-	// strip +brewing (shorter → fits)
-	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+brewing", "") }); err != nil {
+	// strip +builddir (shorter → fits)
+	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+builddir", "") }); err != nil {
 		t.Fatal(err)
 	}
 	ss, _ := ReadMachoStrings(p)
@@ -169,7 +169,7 @@ func TestRewriteMachoStrings(t *testing.T) {
 
 func TestRewriteMachoStringsSeamErrors(t *testing.T) {
 	defer restore()
-	p := buildMachO(t, machoCmd{lcIDDylib, "/opt/x/v1+brewing/lib/libz.dylib"})
+	p := buildMachO(t, machoCmd{lcIDDylib, "/opt/x/v1+builddir/lib/libz.dylib"})
 	// readfile error in machoInfo
 	osReadFile = func(string) ([]byte, error) { return nil, errInject }
 	if err := RewriteMachoStrings(p, func(s string) string { return s }); !errors.Is(err, errInject) {
@@ -178,13 +178,13 @@ func TestRewriteMachoStringsSeamErrors(t *testing.T) {
 	osReadFile = os.ReadFile
 	// stat error (after a real change)
 	osStat = func(string) (os.FileInfo, error) { return nil, errInject }
-	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+brewing", "") }); !errors.Is(err, errInject) {
+	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+builddir", "") }); !errors.Is(err, errInject) {
 		t.Errorf("stat seam: %v", err)
 	}
 	osStat = os.Stat
 	// writefile error
 	osWriteFile = func(string, []byte, os.FileMode) error { return errInject }
-	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+brewing", "") }); !errors.Is(err, errInject) {
+	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+builddir", "") }); !errors.Is(err, errInject) {
 		t.Errorf("writefile seam: %v", err)
 	}
 }
@@ -201,18 +201,18 @@ func TestRewriteMachoHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	// real strip via FixUp(darwin): the crafted dylib under lib/ gets its
-	// +brewing install name rewritten to the final prefix.
+	// `+builddir` install name rewritten to the final prefix.
 	prefix := t.TempDir()
 	os.MkdirAll(filepath.Join(prefix, "lib"), 0o755)
-	dy := buildMachO(t, machoCmd{lcIDDylib, prefix + "+brewing/lib/libz.dylib"})
+	dy := buildMachO(t, machoCmd{lcIDDylib, prefix + "+builddir/lib/libz.dylib"})
 	data, _ := os.ReadFile(dy)
 	os.WriteFile(filepath.Join(prefix, "lib", "libz.dylib"), data, 0o755)
-	if err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+brewing", Platform: "darwin", Log: func(string) {}}); err != nil {
+	if err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+builddir", Platform: "darwin", Log: func(string) {}}); err != nil {
 		t.Fatal(err)
 	}
 	ss, _ := ReadMachoStrings(filepath.Join(prefix, "lib", "libz.dylib"))
-	if len(ss) == 0 || strings.Contains(ss[0], "+brewing") {
-		t.Errorf("darwin FixUp did not strip +brewing: %v", ss)
+	if len(ss) == 0 || strings.Contains(ss[0], "+builddir") {
+		t.Errorf("darwin FixUp did not strip +builddir: %v", ss)
 	}
 	// ErrNoSpace is tolerated (logged, not fatal): a dylib whose install name is
 	// "/x" and a buildInstall→prefix rewrite that GROWS it past its slot.
@@ -278,8 +278,8 @@ func TestWalkMachoStringsEdges(t *testing.T) {
 
 func TestFatMachO(t *testing.T) {
 	p := buildFatMachO(t,
-		[]machoCmd{{lcIDDylib, "/opt/x/v1+brewing/lib/libz.dylib"}, {lcRpath, "/opt/pkgx"}},
-		[]machoCmd{{lcIDDylib, "/opt/x/v1+brewing/lib/libz.dylib"}},
+		[]machoCmd{{lcIDDylib, "/opt/x/v1+builddir/lib/libz.dylib"}, {lcRpath, "/opt/pkgx"}},
+		[]machoCmd{{lcIDDylib, "/opt/x/v1+builddir/lib/libz.dylib"}},
 	)
 	// the crafted fat must be well-formed per the stdlib
 	ff, err := macho.OpenFat(p)
@@ -299,7 +299,7 @@ func TestFatMachO(t *testing.T) {
 		t.Fatalf("ReadMachoStrings fat = %v %v, want 3 strings", ss, err)
 	}
 	// rewrite touches every slice
-	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+brewing", "") }); err != nil {
+	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+builddir", "") }); err != nil {
 		t.Fatal(err)
 	}
 	ss, _ = ReadMachoStrings(p)
@@ -320,17 +320,17 @@ func TestFatMachO(t *testing.T) {
 
 func TestFat64MachO(t *testing.T) {
 	p := buildFat(t, true,
-		[]machoCmd{{lcIDDylib, "/opt/x/v1+brewing/lib/liba.dylib"}},
-		[]machoCmd{{lcRpath, "/opt/pkgx+brewing"}},
+		[]machoCmd{{lcIDDylib, "/opt/x/v1+builddir/lib/liba.dylib"}},
+		[]machoCmd{{lcRpath, "/opt/pkgx+builddir"}},
 	)
 	if !isMachO(p) {
 		t.Error("fat64 binary not recognised as Mach-O")
 	}
 	ss, err := ReadMachoStrings(p)
-	if err != nil || len(ss) != 2 || ss[0] != "/opt/x/v1+brewing/lib/liba.dylib" || ss[1] != "/opt/pkgx+brewing" {
+	if err != nil || len(ss) != 2 || ss[0] != "/opt/x/v1+builddir/lib/liba.dylib" || ss[1] != "/opt/pkgx+builddir" {
 		t.Fatalf("ReadMachoStrings fat64 = %v %v", ss, err)
 	}
-	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+brewing", "") }); err != nil {
+	if err := RewriteMachoStrings(p, func(s string) string { return strings.ReplaceAll(s, "+builddir", "") }); err != nil {
 		t.Fatal(err)
 	}
 	ss, _ = ReadMachoStrings(p)

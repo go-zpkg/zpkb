@@ -315,7 +315,7 @@ func MachoNeeded(path string) ([]string, error) {
 // place by applying fn — every architecture slice of a fat binary. It cannot
 // grow a string (Mach-O load commands are a fixed size), so a longer
 // replacement returns ErrNoSpace; a shorter one is zero-padded. Stripping a
-// staging suffix (…+brewing) always shrinks, so fits.
+// staging suffix (…+builddir) always shrinks, so fits.
 //
 // Any slice it changes is re-signed (see machosign.go): an edited Mach-O whose
 // signature still describes the old bytes is not a binary with a stale
@@ -588,9 +588,9 @@ func relativeRpath(exe, rpath, zpkgDir string) (string, bool) {
 	return "@loader_path/" + filepath.ToSlash(rel), true
 }
 
-// rewriteMacho strips the +brewing staging prefix from a Mach-O's install name
+// rewriteMacho strips the +builddir staging prefix from a Mach-O's install name
 // and dep references (buildInstall → prefix), the darwin analogue of the .pc /
-// .cmake path rewrite. Removing +brewing shrinks the string, so it always fits.
+// .cmake path rewrite. Removing +builddir shrinks the string, so it always fits.
 func rewriteMacho(exe string, opts Options) error {
 	if !isMachO(exe) {
 		return nil
@@ -992,7 +992,7 @@ func exists(p string) bool {
 }
 
 // staged is unstage's inverse: the path a file is at RIGHT NOW, while the build
-// is still writing into +brewing. qualifyRef has to stat the file that exists,
+// is still writing into +builddir. qualifyRef has to stat the file that exists,
 // and name the one that will.
 func staged(p string, opts Options) string {
 	if opts.BuildInstall == "" || !strings.HasPrefix(p, opts.Prefix) {

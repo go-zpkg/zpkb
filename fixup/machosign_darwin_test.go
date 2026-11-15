@@ -34,7 +34,7 @@ func TestRewrittenBinaryStillRunsAndVerifies(t *testing.T) {
 	}
 	dir := t.TempDir()
 	real := filepath.Join(dir, "lib")
-	staged := real + "+brewing" // what the install name is baked with
+	staged := real + "+builddir" // what the install name is baked with
 	for _, d := range []string{real, staged, filepath.Join(dir, "bin")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
@@ -89,7 +89,7 @@ func TestRewrittenBinaryStillRunsAndVerifies(t *testing.T) {
 
 	for _, p := range []string{exe, filepath.Join(real, "libfoo.dylib")} {
 		if err := RewriteMachoStrings(p, func(s string) string {
-			return strings.ReplaceAll(s, "+brewing", "")
+			return strings.ReplaceAll(s, "+builddir", "")
 		}); err != nil {
 			t.Fatalf("rewrite %s: %v", p, err)
 		}
