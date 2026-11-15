@@ -29,9 +29,9 @@ var (
 )
 
 // WriteLibexec materialises the build-shim helpers into dir, each as a symlink
-// to the running bk executable. Point WrapOptions.BrewkitPath at dir so
+// to the running zpkb executable. Point WrapOptions.ShimPath at dir so
 // wrapper.go prepends it to the build PATH and recipes can exec the shims (e.g.
-// `fix-shebangs.ts bin/*`); bk's multi-call dispatch then runs the pure-Go
+// `fix-shebangs.ts bin/*`); zpkb's multi-call dispatch then runs the pure-Go
 // helper selected by argv[0]'s basename. If the running executable's path
 // cannot be determined the error is returned (never silently fall back to a
 // shell script — the failure must stay visible).

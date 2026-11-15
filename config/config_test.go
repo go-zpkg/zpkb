@@ -59,14 +59,14 @@ func TestComputeDefaultLayout(t *testing.T) {
 		t.Errorf("BuildInstall = %q", p.BuildInstall)
 	}
 	// keyed on the TARGET platform+arch
-	wantRoot := filepath.FromSlash("/data/brewkit/windows+x86-64/acme.org/tool/v1.2.3")
+	wantRoot := filepath.FromSlash("/data/zpkb/windows+x86-64/acme.org/tool/v1.2.3")
 	if p.Home != wantRoot {
 		t.Errorf("Home = %q want %q", p.Home, wantRoot)
 	}
 	if p.Src != filepath.Join(wantRoot, "src") || p.Build != filepath.Join(wantRoot, "build") || p.Test != filepath.Join(wantRoot, "testbed") {
 		t.Errorf("paths = %+v", p)
 	}
-	if p.TarballDir != filepath.FromSlash("/data/brewkit") {
+	if p.TarballDir != filepath.FromSlash("/data/zpkb") {
 		t.Errorf("TarballDir = %q", p.TarballDir)
 	}
 
@@ -189,6 +189,39 @@ func TestComputeRootCoversEveryBuildDir(t *testing.T) {
 			if !strings.HasPrefix(d, p.Root+string(filepath.Separator)) {
 				t.Errorf("%s: %q is not under Root %q", name, d, p.Root)
 			}
+		}
+	}
+}
+
+// ⛔⛔ THE BUILD TREE IS NOT `brewkit` ANY MORE, AND NOTHING FALLS BACK TO IT.
+// The owner's decision of 2026-11-15: we do not share a directory with a tool
+// we no longer support. `~/.local/share/brewkit` is upstream brewkit's build
+// tree, and ours living inside it was the same collision the binary rename
+// removed — `target.Override` refuses `BREWKIT_TARGET` for exactly that
+// reason, with its own gate, and this directory was missed when the variable
+// was done.
+//
+// This is that gate. "We stopped using it" is a claim about code, and before
+// this test nothing asserted it: the string lived in one `filepath.Join` and a
+// single careless edit would put it back with every test still green.
+//
+// It asserts on the PATHS rather than on the constant, so that renaming the
+// constant without changing what is computed cannot satisfy it.
+func TestTheOldBuildTreeIsNotUsed(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", filepath.FromSlash("/data"))
+	t.Setenv("ZPKG_DIR", filepath.FromSlash("/opt/pkgx"))
+	t.Setenv("ZPKB_PANTRY", "")
+
+	p := Compute("acme.org/tool", "1.2.3", "abcdefghijklmnop", target.Target{Platform: "linux", Arch: "x86-64"})
+	for name, d := range map[string]string{
+		"Root": p.Root, "Home": p.Home, "Src": p.Src,
+		"Build": p.Build, "Test": p.Test, "TarballDir": p.TarballDir,
+	} {
+		if strings.Contains(d, "brewkit") {
+			t.Errorf("%s = %q still names upstream's build tree", name, d)
+		}
+		if !strings.Contains(d, filepath.FromSlash("/data/zpkb")) {
+			t.Errorf("%s = %q is not under our own build tree", name, d)
 		}
 	}
 }

@@ -465,7 +465,7 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 	}
 	// Materialise the build-shim helpers (fix-shebangs.ts, …) into a per-build
 	// libexec dir alongside the generated script, and prepend it to PATH via
-	// BrewkitPath so recipes that exec them (`fix-shebangs.ts bin/*`) resolve.
+	// ShimPath so recipes that exec them (`fix-shebangs.ts bin/*`) resolve.
 	libexecDir := paths.Build + ".libexec"
 	if err := writeLibexec(libexecDir, r.LibcMode == "zpkx", tgt.Triple, tgt.Platform, tgt.Arch); err != nil {
 		return res, fmt.Errorf("write libexec: %w", err)
@@ -481,7 +481,7 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 		PrefixMap:  prefixMap,
 		UserScript: user, Deps: deps, ToolDeps: toolDeps, Target: tgt, Host: host,
 		Home: paths.Home, SrcRoot: paths.Build, ZpkgDir: config.ZpkgDir(), Install: paths.Install, Project: project,
-		ZpkxBin: r.ZpkxBin, BashPath: r.BashPath, BrewkitPath: libexecDir,
+		ZpkxBin: r.ZpkxBin, BashPath: r.BashPath, ShimPath: libexecDir,
 		LibcZpkx:  r.LibcMode == "zpkx",
 		Glibc:     r.Glibc,
 		Bootstrap: r.Bootstrap,
