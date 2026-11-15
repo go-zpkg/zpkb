@@ -72,12 +72,12 @@ func writeELFInterp(t *testing.T, path, interp string, slotLen int) {
 func TestReadInterp(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "libc.so.6")
-	writeELFInterp(t, p, "/opt/pkgx/gnu.org/glibc/v2.44+brewing/lib/ld64.so.1", 64)
+	writeELFInterp(t, p, "/opt/pkgx/gnu.org/glibc/v2.44+builddir/lib/ld64.so.1", 64)
 	got, err := ReadInterp(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "/opt/pkgx/gnu.org/glibc/v2.44+brewing/lib/ld64.so.1"; got != want {
+	if want := "/opt/pkgx/gnu.org/glibc/v2.44+builddir/lib/ld64.so.1"; got != want {
 		t.Errorf("ReadInterp = %q, want %q", got, want)
 	}
 
@@ -96,7 +96,7 @@ func TestReadInterp(t *testing.T) {
 
 func TestSetInterpShortensInPlaceAndPads(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "libc.so.6")
-	const staged = "/home/linux1/.pkgx/gnu.org/glibc/v2.44+brewing/lib/ld64.so.1"
+	const staged = "/home/linux1/.pkgx/gnu.org/glibc/v2.44+builddir/lib/ld64.so.1"
 	writeELFInterp(t, p, staged, len(staged)+1)
 	before, err := os.Stat(p)
 	if err != nil {
@@ -132,7 +132,7 @@ func TestSetInterpShortensInPlaceAndPads(t *testing.T) {
 	if b[len(b)-1] != 0 {
 		t.Errorf("the last byte of the slot is %q, not NUL", b[len(b)-1])
 	}
-	if strings.Contains(string(b), "+brewing") {
+	if strings.Contains(string(b), "+builddir") {
 		t.Error("the staging prefix survives in the file's bytes")
 	}
 }
@@ -169,7 +169,7 @@ func TestSetInterpOnAnELFWithout(t *testing.T) {
 func TestFixInterpUnstagesTheLoaderPath(t *testing.T) {
 	root := t.TempDir()
 	prefix := filepath.Join(root, "gnu.org", "glibc", "v2.44")
-	staging := prefix + "+brewing"
+	staging := prefix + "+builddir"
 
 	libc := filepath.Join(prefix, "lib", "libc.so.6")
 	writeELFInterp(t, libc, staging+"/lib/glibc-2.44/ld64.so.1", 160)
@@ -237,11 +237,11 @@ func TestFixUpRunsAndSkipsTheInterpRewrite(t *testing.T) {
 		want  string
 	}{
 		{"wired in", nil, "/lib/glibc/ld64.so.1"},
-		{"fix-patchelf", []string{"fix-patchelf"}, "+brewing/lib/glibc/ld64.so.1"},
+		{"fix-patchelf", []string{"fix-patchelf"}, "+builddir/lib/glibc/ld64.so.1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prefix := filepath.Join(t.TempDir(), "v2.44")
-			staging := prefix + "+brewing"
+			staging := prefix + "+builddir"
 			libc := filepath.Join(prefix, "lib", "libc.so.6")
 			writeELFInterp(t, libc, staging+"/lib/glibc/ld64.so.1", 200)
 
@@ -254,10 +254,10 @@ func TestFixUpRunsAndSkipsTheInterpRewrite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := prefix + strings.TrimPrefix(tc.want, "+brewing"); tc.skips == nil && got != want {
+			if want := prefix + strings.TrimPrefix(tc.want, "+builddir"); tc.skips == nil && got != want {
 				t.Errorf("interp = %q, want %q", got, want)
 			}
-			if tc.skips != nil && !strings.Contains(got, "+brewing") {
+			if tc.skips != nil && !strings.Contains(got, "+builddir") {
 				t.Errorf("interp = %q, want the staging path left alone", got)
 			}
 		})
@@ -325,7 +325,7 @@ func TestSetInterpOSFailures(t *testing.T) {
 // to remove.
 func TestFixInterpSurfacesAWriteFailure(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "v1")
-	staging := prefix + "+brewing"
+	staging := prefix + "+builddir"
 	libc := filepath.Join(prefix, "lib", "libc.so.6")
 	// A slot big enough for the path, and then CHECKED. At 96 bytes this test
 	// passed alone and failed in the suite: t.TempDir() is named after the
@@ -353,7 +353,7 @@ func TestFixInterpSurfacesAWriteFailure(t *testing.T) {
 // loader path still names a build directory is not one to go on signing.
 func TestFixUpStopsWhenTheInterpRewriteFails(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "v2.44")
-	staging := prefix + "+brewing"
+	staging := prefix + "+builddir"
 	libc := filepath.Join(prefix, "lib", "libc.so.6")
 	writeELFInterp(t, libc, staging+"/lib/ld.so", 512)
 

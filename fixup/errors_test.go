@@ -212,7 +212,7 @@ func TestWalkExesReadError(t *testing.T) {
 // outcome nobody can check.
 func TestEnsureWritableChmodErrorAtEveryWriter(t *testing.T) {
 	t.Run("mach-o", func(t *testing.T) {
-		p := buildMachO(t, machoCmd{lcIDDylib, "/opt/x/v1+brewing/lib/libz.dylib"})
+		p := buildMachO(t, machoCmd{lcIDDylib, "/opt/x/v1+builddir/lib/libz.dylib"})
 		if err := os.Chmod(p, 0o400); err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +221,7 @@ func TestEnsureWritableChmodErrorAtEveryWriter(t *testing.T) {
 		defer func() { osChmod = saved }()
 		osChmod = func(string, os.FileMode) error { return errInject }
 		err := RewriteMachoStrings(p, func(s string) string {
-			return strings.ReplaceAll(s, "+brewing", "")
+			return strings.ReplaceAll(s, "+builddir", "")
 		})
 		if !errors.Is(err, errInject) {
 			t.Errorf("err = %v, want the chmod error", err)
@@ -295,9 +295,9 @@ func TestRewriteMachoDeadRpathAfterRewrite(t *testing.T) {
 	zpkx := filepath.Join(t.TempDir(), ".pkgx")
 	prefix := filepath.Join(zpkx, "acme.org", "thing", "v1.0.0")
 	exe := filepath.Join(prefix, "bin", "thing")
-	place(t, exe, machoCmd{lcIDDylib, prefix + "+brewing/lib/libthing.dylib"},
+	place(t, exe, machoCmd{lcIDDylib, prefix + "+builddir/lib/libthing.dylib"},
 		machoCmd{lcLoadDylib, "@rpath/tukaani.org/xz/v5.8.3/lib/liblzma.5.dylib"})
-	err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+brewing", Platform: "darwin", ZpkgDir: zpkx})
+	err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+builddir", Platform: "darwin", ZpkgDir: zpkx})
 	if !errors.Is(err, ErrDeadRpath) {
 		t.Errorf("err = %v, want ErrDeadRpath after a rewrite too", err)
 	}
@@ -309,11 +309,11 @@ func TestRewriteMachoWriteErrorSurfaces(t *testing.T) {
 	zpkx := filepath.Join(t.TempDir(), ".pkgx")
 	prefix := filepath.Join(zpkx, "acme.org", "thing", "v1.0.0")
 	exe := filepath.Join(prefix, "bin", "thing")
-	place(t, exe, machoCmd{lcIDDylib, prefix + "+brewing/lib/libthing.dylib"})
+	place(t, exe, machoCmd{lcIDDylib, prefix + "+builddir/lib/libthing.dylib"})
 	saved := osWriteFile
 	defer func() { osWriteFile = saved }()
 	osWriteFile = func(string, []byte, os.FileMode) error { return errInject }
-	err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+brewing", Platform: "darwin", ZpkgDir: zpkx})
+	err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+builddir", Platform: "darwin", ZpkgDir: zpkx})
 	if !errors.Is(err, errInject) {
 		t.Errorf("err = %v, want the write error", err)
 	}

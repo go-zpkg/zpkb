@@ -46,7 +46,10 @@ func okRecipe() *pantry.Recipe {
 }
 
 // okRunner returns a Runner whose stubs all succeed; its Run stub creates the
-// +brewing install dir so the subsequent rename works.
+// `+builddir` install dir so the subsequent rename works. (The suffix is
+// `+builddir` and not `+build` because a comment line opening with the bare
+// token `+build` is Go's legacy build-constraint syntax — see
+// cmd/zpkb/build_test.go for the measurement.)
 //
 // ⛔ THE STUB READS THE STAGING DIR OFF THE RUNNER RATHER THAN COMPUTING IT.
 // It is named after the build's IDENTITY, which is a function of the recipe
@@ -397,7 +400,7 @@ func TestBuildFetchMirrorFallback(t *testing.T) {
 }
 
 // TestBuildStageInstallDestExists drives the dest-exists rename branch with real
-// os calls: Run leaves both the +brewing tree AND the final prefix in place, so
+// os calls: Run leaves both the +builddir tree AND the final prefix in place, so
 // stage-install must remove the stale prefix and then rename successfully.
 func TestBuildStageInstallDestExists(t *testing.T) {
 	tenv(t)
@@ -1424,7 +1427,7 @@ func TestAFailedStageLeavesTheWorkingInstallInPlace(t *testing.T) {
 	// rollback too — which made the test fail for its own reason and would
 	// have read as the code being wrong.
 	osRename = func(from, to string) error {
-		if from == install+"+brewing" {
+		if from == install+"+builddir" {
 			return errors.New("no space left on device")
 		}
 		return oldRename(from, to)

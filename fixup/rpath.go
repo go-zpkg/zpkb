@@ -303,16 +303,16 @@ func transformRpath(input, projectDir string) string {
 	return versionRE.ReplaceAllString(input, "v$1")
 }
 
-// unstage maps a path under the +brewing staging prefix onto the final one.
+// unstage maps a path under the +builddir staging prefix onto the final one.
 //
 // The build's own RUNPATH names the prefix it was configured with, and that is
 // the STAGING directory: an autotools package built with
-// --prefix=…/v1.22.0+brewing bakes …/v1.22.0+brewing/lib into every binary.
+// --prefix=…/v1.22.0+builddir bakes …/v1.22.0+builddir/lib into every binary.
 // The entry starts with the project dir, so it was kept and made
 // $ORIGIN-relative verbatim — preserving a directory that ceases to exist the
 // moment the build is renamed into place:
 //
-//	$ORIGIN/../../v1.22.0+brewing/lib:$ORIGIN/../lib
+//	$ORIGIN/../../v1.22.0+builddir/lib:$ORIGIN/../lib
 //
 // Measured on published artifacts: openucx.org has it in 11 of its 13 ELFs and
 // sqlite.org in both of its. Neither is broken, because the entry that follows

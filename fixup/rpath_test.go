@@ -331,22 +331,22 @@ func TestFixRpathsSkipsAndDarwin(t *testing.T) {
 }
 
 // TestRunpathDropsTheStagingPrefix is what published artifacts were carrying: an
-// autotools build configured with --prefix=<version>+brewing bakes that path
+// autotools build configured with --prefix=<version>+builddir bakes that path
 // into every binary, the entry starts with the project dir so it was kept, and
 // $ORIGIN-relativising it preserved a directory that ceases to exist when the
 // build is renamed into place.
 //
-//	$ORIGIN/../../v1.0.0+brewing/lib:$ORIGIN/../lib
+//	$ORIGIN/../../v1.0.0+builddir/lib:$ORIGIN/../lib
 //
 // Measured before the fix: openucx.org 11 of 13 ELFs, sqlite.org 2 of 2.
 func TestRunpathDropsTheStagingPrefix(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "acme.org", "tool", "v1.0.0")
-	build := prefix + "+brewing"
+	build := prefix + "+builddir"
 	if err := os.MkdirAll(filepath.Join(prefix, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// The slot must hold the ORIGINAL string; the rewrite only ever shrinks it,
-	// since the final prefix is the staging one minus "+brewing".
+	// since the final prefix is the staging one minus "+builddir".
 	staged := build + "/lib"
 	src := buildELF64LE(t, staged, "libc.so.6", len(staged)+16)
 	data, err := os.ReadFile(src)
@@ -361,7 +361,7 @@ func TestRunpathDropsTheStagingPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	rp, _ := ReadRunpath(exe)
-	if strings.Contains(rp, "+brewing") {
+	if strings.Contains(rp, "+builddir") {
 		t.Errorf("RUNPATH keeps the staging dir: %q", rp)
 	}
 	// It is mapped onto the final prefix, not dropped: the build put it there
@@ -374,8 +374,8 @@ func TestRunpathDropsTheStagingPrefix(t *testing.T) {
 // A staged path is only rewritten when there IS a staging prefix, and a path
 // that merely resembles one is left alone.
 func TestUnstage(t *testing.T) {
-	o := Options{Prefix: "/pkgx/acme.org/v1.0.0", BuildInstall: "/pkgx/acme.org/v1.0.0+brewing"}
-	if got := unstage("/pkgx/acme.org/v1.0.0+brewing/lib", o); got != "/pkgx/acme.org/v1.0.0/lib" {
+	o := Options{Prefix: "/pkgx/acme.org/v1.0.0", BuildInstall: "/pkgx/acme.org/v1.0.0+builddir"}
+	if got := unstage("/pkgx/acme.org/v1.0.0+builddir/lib", o); got != "/pkgx/acme.org/v1.0.0/lib" {
 		t.Errorf("unstage = %q", got)
 	}
 	if got := unstage("/pkgx/acme.org/v1.0.0/lib", o); got != "/pkgx/acme.org/v1.0.0/lib" {

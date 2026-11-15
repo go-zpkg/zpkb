@@ -554,7 +554,7 @@ func TestBareReferenceToAnotherPackageIsLeftAlone(t *testing.T) {
 	t.Errorf("references = %v\nwant @rpath/libzstd.1.dylib kept verbatim", strs)
 }
 
-// While a build is still writing, the file is under the +brewing staging
+// While a build is still writing, the file is under the +builddir staging
 // prefix and the name it must be given is the final one. qualifyRef stats
 // where the bytes ARE and writes where they WILL BE; a lookup that only knew
 // one of the two would answer "no such library" for every package fixed up
@@ -562,7 +562,7 @@ func TestBareReferenceToAnotherPackageIsLeftAlone(t *testing.T) {
 func TestQualifyBareReferenceFindsTheStagedFile(t *testing.T) {
 	zpkx := t.TempDir()
 	prefix := filepath.Join(zpkx, "bytereef.org", "mpdecimal", "v2.5.1")
-	staging := filepath.Join(zpkx, "bytereef.org", "mpdecimal", "v2.5.1+brewing")
+	staging := filepath.Join(zpkx, "bytereef.org", "mpdecimal", "v2.5.1+builddir")
 	if err := os.MkdirAll(filepath.Join(staging, "lib"), 0o755); err != nil {
 		t.Fatal(err)
 	}

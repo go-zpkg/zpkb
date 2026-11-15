@@ -19,7 +19,7 @@ import (
 // Options controls a fix-up run.
 type Options struct {
 	Prefix       string   // the final install prefix (…/project/vX.Y.Z)
-	BuildInstall string   // the +brewing staging prefix that paths were baked with
+	BuildInstall string   // the +builddir staging prefix that paths were baked with
 	Platform     string   // target platform: darwin | linux | windows
 	ZpkgDir      string   // $ZPKG_DIR: the root darwin @rpath references resolve against
 	Skips        []string // recipe build.skip entries (fix-machos, fix-patchelf, libtool-cleanup, flatten-includes)
@@ -265,7 +265,7 @@ func walkCMake(dir, prefix, buildInstall string, log func(string, ...any)) error
 	return nil
 }
 
-// rewriteFile replaces both the +brewing (build) prefix and the final prefix
+// rewriteFile replaces both the +builddir (build) prefix and the final prefix
 // with repl in one file, writing back only if something changed.
 func rewriteFile(path, buildInstall, prefix, repl string, log func(string, ...any)) error {
 	b, err := os.ReadFile(path)

@@ -28,7 +28,25 @@ func writeRecipe(t *testing.T) string {
 }
 
 // stubFactory returns a factory whose Runner succeeds; its Run creates the
-// +brewing dir so the pipeline's rename works. version is fixed to 1.0.0.
+// `+builddir` staging dir so the pipeline's rename works. version is fixed to
+// 1.0.0.
+//
+// ⛔⛔ THE SUFFIX IS `+builddir` AND NOT `+build`, AND THAT IS WHY. `+build`
+// was tried first and it does not survive contact with the toolchain: a
+// comment line opening with the bare token is Go's own legacy BUILD CONSTRAINT
+// syntax, so three comments like this one stopped their packages compiling —
+//
+//	misplaced +build comment
+//	invalid non-alphanumeric build constraint: pipeline's
+//
+// — and the only fix would have been a rule that the suffix must never open a
+// comment line, forever, in a repository where it appears on 127 of them.
+//
+// Measured rather than reasoned, with a positive control: a probe package
+// carrying `+builddir`, `+buildpath` and `+staging` on their own comment lines
+// is clean under `gofmt -l` and `go vet`, while the same file with a bare
+// `+build` line is flagged by both. Only the exact token is claimed, so
+// `+builddir` needs no discipline from anybody.
 //
 // ⛔ IT READS THE PREFIX FROM THE RUNNER RATHER THAN COMPUTING IT. The
 // install prefix carries the build's identity hash, which depends on the

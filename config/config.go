@@ -52,7 +52,7 @@ type Paths struct {
 	Test         string // where tests stage and run
 	TarballDir   string // where downloaded source tarballs are cached
 	Install      string // final install prefix: $ZPKG_DIR/<project>/v<version>
-	BuildInstall string // staging prefix the build writes to: <Install>+brewing
+	BuildInstall string // staging prefix the build writes to: <Install>+builddir
 }
 
 // ZpkgDir returns the store prefix ($ZPKG_DIR, else ~/.zpkg).
@@ -127,7 +127,7 @@ func Compute(project, version, hash string, tgt target.Target) Paths {
 	install := filepath.Join(ZpkgDir(), filepath.FromSlash(project), "v"+version+"-h"+hash)
 	p := Paths{
 		Install:      install,
-		BuildInstall: install + "+brewing",
+		BuildInstall: install + "+builddir",
 	}
 
 	if checkout := pantryCheckout(); checkout != "" {

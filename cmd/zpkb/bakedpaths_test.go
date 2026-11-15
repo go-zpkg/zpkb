@@ -108,9 +108,9 @@ func TestTheThreeShippedDefectsAreEachNamed(t *testing.T) {
 		// gnu.org/findutils v4.10.0, bin/updatedb: the host's sort, and three
 		// references to the staging tree.
 		"bin/updatedb": "if true\n    sort=\"/usr/bin/sort -z\"\n" +
-			": ${LOCATE_DB=/opt/gnu.org/findutils/v4.10.0+brewing/var/locate/locatedb}\n" +
-			": ${LIBEXECDIR=/opt/gnu.org/findutils/v4.10.0+brewing/libexec}\n" +
-			": ${BINDIR=/opt/gnu.org/findutils/v4.10.0+brewing/bin}\n",
+			": ${LOCATE_DB=/opt/gnu.org/findutils/v4.10.0+builddir/var/locate/locatedb}\n" +
+			": ${LIBEXECDIR=/opt/gnu.org/findutils/v4.10.0+builddir/libexec}\n" +
+			": ${BINDIR=/opt/gnu.org/findutils/v4.10.0+builddir/bin}\n",
 	})
 
 	// The store on THIS machine is somewhere else entirely, which is the point:
@@ -135,7 +135,7 @@ func TestTheThreeShippedDefectsAreEachNamed(t *testing.T) {
 	if ok {
 		t.Errorf("a tree holding three shipped defects passed:\n%s", report)
 	}
-	for _, want := range []string{"+brewing", "#152", "CENSUS", "/usr/bin/pr", "/usr/bin/sort"} {
+	for _, want := range []string{"+builddir", "#152", "CENSUS", "/usr/bin/pr", "/usr/bin/sort"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("report does not name %q:\n%s", want, report)
 		}
@@ -154,7 +154,7 @@ func pathsOf(m map[string][]storePathHit) []string {
 // because there is no tree in which a staging path is the intent.
 func TestAStagingPathHasNoDerogation(t *testing.T) {
 	root := stagedTree(t, map[string]string{
-		"bin/x": ": ${BINDIR=/opt/gnu.org/findutils/v4.10.0+brewing/bin}",
+		"bin/x": ": ${BINDIR=/opt/gnu.org/findutils/v4.10.0+builddir/bin}",
 	})
 	scan, err := scanStorePaths(root, "/opt/zpkg")
 	if err != nil {

@@ -140,8 +140,8 @@ func TestNoZpkgDirIsTheOldBehaviour(t *testing.T) {
 	dir := t.TempDir()
 	prefix := filepath.Join(dir, "acme.org", "foo", "v1.2.3")
 	exe := filepath.Join(prefix, "bin", "foo")
-	place(t, exe, machoCmd{lcIDDylib, prefix + "+brewing/lib/libfoo.dylib"})
-	if err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+brewing", Platform: "darwin"}); err != nil {
+	place(t, exe, machoCmd{lcIDDylib, prefix + "+builddir/lib/libfoo.dylib"})
+	if err := FixUp(Options{Prefix: prefix, BuildInstall: prefix + "+builddir", Platform: "darwin"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadMachoStrings(exe)

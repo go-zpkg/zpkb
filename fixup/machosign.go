@@ -25,7 +25,7 @@ import (
 //
 // The linker ad-hoc signs every arm64 binary it produces (flags 0x20002 =
 // adhoc|linker-signed), so this applies to essentially everything bk builds
-// for darwin/aarch64. Stripping +brewing from an install name is exactly such
+// for darwin/aarch64. Stripping +builddir from an install name is exactly such
 // an edit. Without what follows, an artifact whose paths we fixed would be a
 // artifact nobody can run, and the failure would look like nothing at all.
 //

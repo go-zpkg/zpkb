@@ -526,7 +526,7 @@ func stageBuilder(o stageOptions) error {
 //     ldconfig has the same baked in, so `ldconfig -r <root>` cannot even build
 //     a cache inside the tree.
 //
-// What remains is LD_LIBRARY_PATH, which bk's build wrapper exports and PID 1
+// What remains is LD_LIBRARY_PATH, which zpkb's build wrapper exports and PID 1
 // does not have. This file is the data an init needs to export it. Measured:
 // without it, /bin/sh in an Incus container built from this tree dies with
 // "libc.so.6: cannot open shared object file"; with it, clang compiles, links

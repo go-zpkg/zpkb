@@ -1885,7 +1885,7 @@ func TestFactoryDropsAPublishedBuildTree(t *testing.T) {
 	}
 
 	// ⛔ THE STAGED INSTALL IS NAMED AFTER THE BUILD'S IDENTITY, so the sweep
-	// has to be told which build it is clearing: `v1.2.3+brewing` named a
+	// has to be told which build it is clearing: `v1.2.3+builddir` named a
 	// version, and two builds of one version staged into the same directory.
 	const hash = "abcdefghijklmnop"
 
