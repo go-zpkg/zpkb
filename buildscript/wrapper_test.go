@@ -17,13 +17,13 @@ func TestWrapLinux(t *testing.T) {
 		Deps:       []string{"openssl.org@1.1", "zlib.net"},
 		Target:     linuxTgt(), Host: linuxTgt(),
 		Home: "/bk/home", SrcRoot: "/bk/build", ZpkgDir: "/opt/pkgx",
-		BrewkitPath: "/bk/libexec", ZpkxBin: "/opt/pkgx/bin/pkgx", BashPath: "/opt/bash",
+		ShimPath: "/zpkb/libexec", ZpkxBin: "/opt/pkgx/bin/pkgx", BashPath: "/opt/bash",
 	})
 	wants := []string{
 		"#!/opt/bash\n",
 		"set -eo pipefail",
 		`__bk_deps_env="$(CLICOLOR_FORCE=1 /opt/pkgx/bin/pkgx "+openssl.org@1.1" "+zlib.net" "+llvm.org")" || {`,
-		`export PATH="/bk/libexec:$PATH"`,
+		`export PATH="/zpkb/libexec:$PATH"`,
 		`export CMAKE_PREFIX_PATH="/opt/pkgx${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"`,
 		`export ZPKGX="/opt/pkgx/bin/pkgx"`,
 		`export HOME="/bk/home"`,

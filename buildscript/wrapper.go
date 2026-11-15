@@ -28,18 +28,27 @@ type WrapOptions struct {
 	// VAR="new${VAR:+:$VAR}", so the last eval wins. Nothing is dropped, so a
 	// recipe that names a header-bearing dependency under build.dependencies
 	// still finds it — one place later than before.
-	ToolDeps    []string
-	Target      target.Target // what we build FOR — drives FLAGS
-	Host        target.Target // where we run — drives TMPDIR
-	Home        string        // a fresh HOME for the build
-	SrcRoot     string        // the build directory (also SRCROOT / cd target)
-	ZpkgDir     string        // $ZPKG_DIR — the rpath root and CMAKE_PREFIX_PATH
-	Install     string        // the final install prefix ($ZPKG_DIR/project/vX.Y.Z)
-	Project     string        // the project being built, so we never preset a tool IT provides
-	BrewkitPath string        // dir prepended to PATH for the build shims (optional)
-	ZpkxBin     string        // path to the zpkx binary (for the deps eval + $ZPKGX)
-	BashPath    string        // shebang interpreter (default /bin/bash)
-	HasCompiler bool          // a compiler (llvm.org / gnu.org/gcc) is already a dep
+	ToolDeps []string
+	Target   target.Target // what we build FOR — drives FLAGS
+	Host     target.Target // where we run — drives TMPDIR
+	Home     string        // a fresh HOME for the build
+	SrcRoot  string        // the build directory (also SRCROOT / cd target)
+	ZpkgDir  string        // $ZPKG_DIR — the rpath root and CMAKE_PREFIX_PATH
+	Install  string        // the final install prefix ($ZPKG_DIR/project/vX.Y.Z)
+	Project  string        // the project being built, so we never preset a tool IT provides
+	// ShimPath is the dir prepended to PATH for the build shims (optional).
+	//
+	// ⛔ IT WAS `BrewkitPath`, AND THIS IS A BREAKING CHANGE ON PURPOSE. The
+	// field named upstream's tool for a directory that holds OUR shims —
+	// `libexec` beside the running `zpkb` — so the name described somebody
+	// else's product. Below v1, so a MINOR bump; no deprecated alias, for the
+	// reason `target.go` gives about `BREWKIT_TARGET`: two spellings of one
+	// thing make every document explain both forever, and a caller setting the
+	// old one would be silently ignored by a struct literal.
+	ShimPath    string // dir prepended to PATH for the build shims (optional)
+	ZpkxBin     string // path to the zpkx binary (for the deps eval + $ZPKGX)
+	BashPath    string // shebang interpreter (default /bin/bash)
+	HasCompiler bool   // a compiler (llvm.org / gnu.org/gcc) is already a dep
 	// Bootstrap takes the compiler from the HOST instead of adding the llvm.org
 	// artifact, for the first generation on an architecture no registry has. It
 	// travels with build.Runner.Bootstrap, which drops the base toolchain for
@@ -132,8 +141,8 @@ func Wrap(o WrapOptions) string {
 	// last comes first on the path. The link closure must win.
 	writeDepEval(&b, zpkxBin, o.toolPlus(), "tool", 1)
 	writeDepEval(&b, zpkxBin, o.depPlus(), "dependency", 1)
-	if o.BrewkitPath != "" {
-		fmt.Fprintf(&b, "export PATH=\"%s:$PATH\"\n", o.BrewkitPath)
+	if o.ShimPath != "" {
+		fmt.Fprintf(&b, "export PATH=\"%s:$PATH\"\n", o.ShimPath)
 	}
 	if o.ZpkgDir != "" {
 		fmt.Fprintf(&b, "export CMAKE_PREFIX_PATH=\"%s${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}\"\n", o.ZpkgDir)
