@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-zpkg/zpkb/recipefile"
 )
 
 // lintTree writes a pantry checkout and returns its root.
@@ -522,6 +524,107 @@ func TestLintStandaloneTellsAStatedNullFromAnAbsentKey(t *testing.T) {
 	}
 	if !strings.Contains(errb, "acme.org: states no distributable") {
 		t.Errorf("the refusal must name the one key that is missing:\n%s", errb)
+	}
+}
+
+// ⛔ THE LITERAL AND THE LOADER MUST AGREE. hclRecipeName is a literal so that
+// this gate's meaning cannot change when recipefile.Names is reordered; the
+// price of a literal is that it can drift from what the loader actually reads,
+// and this is what keeps it honest.
+func TestTheHCLNameIsARecipeName(t *testing.T) {
+	if !recipefile.IsRecipe(hclRecipeName) {
+		t.Fatalf("%q is not a name the loader reads — the gate would refuse every recipe", hclRecipeName)
+	}
+	if hclRecipeName == "package.yml" {
+		t.Fatal("the gate's own name is the form it exists to refuse")
+	}
+}
+
+// Our own trees hold HCL only: a yaml recipe among them is the finding.
+func TestLintRequiresHCLWhenAsked(t *testing.T) {
+	files := map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n",
+		"b.org/package.yml": "distributable:\n  url: http://x/y.tgz\n",
+	}
+	// Without the flag a yaml recipe is perfectly readable, which is exactly
+	// why the rule needs a gate rather than a note.
+	if rc, _, errb := lint(t, "--dir", lintTree(t, files)); rc != 0 {
+		t.Fatalf("without the flag yaml is legal: rc=%d\n%s", rc, errb)
+	}
+	rc, out, errb := lint(t, "--dir", lintTree(t, files), "--require-hcl")
+	if rc != 1 {
+		t.Fatalf("with the flag a yaml recipe must fail: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(out, "2 recipe(s) read") {
+		t.Errorf("the denominator is missing:\n%s", out)
+	}
+	for _, want := range []string{"b.org: package.yml", "1 recipe file(s) of 2 project(s)"} {
+		if !strings.Contains(errb, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, errb)
+		}
+	}
+	if strings.Contains(errb, "a.org") {
+		t.Errorf("the HCL recipe must not be listed:\n%s", errb)
+	}
+}
+
+// ⛔⛔ THE CASE THE OBVIOUS IMPLEMENTATION PASSES. A directory may hold BOTH
+// forms, and recipefile.Load prefers the HCL — so a check that asked "what
+// would the loader read here?" would answer package.hcl and report the tree
+// clean, while an unread package.yml sat beside it. That is the state the
+// overlay was in before the conversion, so it is not hypothetical.
+func TestLintRequiresHCLSeesAYamlBesideAnHCL(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n",
+		"a.org/package.yml": "distributable:\n  url: http://x/y.tgz\n",
+	})
+	rc, out, errb := lint(t, "--dir", dir, "--require-hcl")
+	if rc != 1 {
+		t.Fatalf("a yaml beside an HCL must still fail: rc=%d\n%s", rc, errb)
+	}
+	// ONE project, and the loader read it fine — the count proves the walk saw
+	// the tree rather than missing it.
+	if !strings.Contains(out, "1 recipe(s) read") {
+		t.Errorf("want one project read:\n%s", out)
+	}
+	if !strings.Contains(errb, "a.org: package.yml") {
+		t.Errorf("the unread yaml must be named:\n%s", errb)
+	}
+}
+
+// A tree that is already all HCL passes at zero, which is why this gate needs
+// no ceiling of its own.
+func TestLintRequireHCLPassesAnAllHCLTree(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl":              "distributable { url = \"http://x/y.tgz\" }\n",
+		"x.org/protocol/xcb/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n",
+	})
+	if rc, _, errb := lint(t, "--dir", dir, "--require-hcl"); rc != 0 {
+		t.Fatalf("an all-HCL tree must pass: rc=%d\n%s", rc, errb)
+	}
+}
+
+// lintRecipeFiles is the one walk, and --require-hcl depends on it reporting
+// EVERY name rather than the first it meets.
+func TestLintRecipeFilesReportsEveryNameAProjectHolds(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n",
+		"a.org/package.yml": "distributable:\n  url: http://x/y.tgz\n",
+		"b.org/package.hcl": "distributable { url = \"http://x/y.tgz\" }\n",
+	})
+	got, err := lintRecipeFiles(filepath.Join(dir, "projects"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 projects, got %d: %v", len(got), got)
+	}
+	if n := len(got["a.org"]); n != 2 {
+		t.Errorf("a.org holds two recipe files, got %d: %v", n, got["a.org"])
+	}
+	// Sorted, so two runs over one tree print the same line.
+	if got["a.org"][0] != "package.hcl" || got["a.org"][1] != "package.yml" {
+		t.Errorf("want the names sorted: %v", got["a.org"])
 	}
 }
 
