@@ -65,16 +65,36 @@ func TestVersionScopeSatisfaction(t *testing.T) {
 	}
 }
 
-// ⛔ An unknown version UNIONS, and an unparseable one FAILS OPEN. Both are the
-// conservative direction for a closure — see versionScope's own comment — and
-// both are asserted because a later "simplification" to fail closed would make
-// a build silently miss a library rather than loudly install a spare one.
-func TestVersionScopeUnknownAndUnparseableInclude(t *testing.T) {
+// ⛔ An unknown version UNIONS, and a version that DEGENERATES to nothing fails
+// OPEN. Both are the conservative direction for a closure — see versionScope's
+// own comment — and both are asserted because a later "simplification" to fail
+// closed would make a build silently miss a library rather than loudly install
+// a spare one.
+//
+// ⛔⛔ WHICH INPUTS ACTUALLY REACH THE `v.Raw == ""` GUARD, read out of
+// artifact@v0.88.0's zpkg.go:517-519 rather than guessed: ParseVer trims space
+// and strips ONE leading `v`, then keeps the remainder as Raw. So Raw is empty
+// exactly when the version is empty after that — `"v"`, `" v "`, whitespace —
+// and nothing else.
+//
+// This test's first version of itself asserted `"not-a-version"` here and
+// PASSED while leaving the guard uncovered: ParseVer stops each dotted segment
+// at its first non-digit, so that string parses to Nums [0], and `0 < 18` is
+// satisfied through Satisfies. A true assertion, reached by the wrong path —
+// which is why the CI coverage gate, not the suite, is what caught it.
+func TestVersionScopeUnknownAndDegenerateInclude(t *testing.T) {
 	if isScope, ok := versionScope("<18", ""); !isScope || !ok {
 		t.Errorf(`versionScope("<18", "") = %v, %v; an unknown version must UNION`, isScope, ok)
 	}
-	if isScope, ok := versionScope("<18", "not-a-version"); !isScope || !ok {
-		t.Errorf(`versionScope("<18", %q) = %v, %v; an unparseable version must fail OPEN`, "not-a-version", isScope, ok)
+	for _, v := range []string{"v", " v ", "   "} {
+		if isScope, ok := versionScope("<18", v); !isScope || !ok {
+			t.Errorf(`versionScope("<18", %q) = %v, %v; a version that parses to nothing must fail OPEN`, v, isScope, ok)
+		}
+	}
+	// And the path that is NOT the guard, kept so the two stay distinguishable:
+	// "not-a-version" has a non-empty Raw and is decided by Satisfies.
+	if isScope, ok := versionScope(">=19", "not-a-version"); !isScope || ok {
+		t.Errorf(`versionScope(">=19", %q) = %v, %v; want a scope DECIDED by Satisfies (Nums [0] does not satisfy >=19)`, "not-a-version", isScope, ok)
 	}
 }
 
