@@ -218,6 +218,66 @@ Completes the pure-Go [`go-zpkg`](https://github.com/go-zpkg) family (artifact /
 zpkx / mirror) with the last Deno piece — a single static binary that builds pantry
 recipes with no Deno/Ruby/patchelf runtime, and cross-builds cleanly.
 
+## A dependency may be scoped to the package's own version
+
+A recipe resolves many versions and states one `dependencies` block, so every
+bound in it has to satisfy all of them. In practice that means the most
+restrictive requirement of the **oldest** resolvable version, which the newest
+then pays for forever — because nothing re-measures a bound once it is written.
+Measured over the upstream pantry:
+
+| recipe | bound | versions excluded | stated reason |
+| --- | --- | --- | --- |
+| `llvm.org` | `cmake.org: '>=3<3.29'` | **69 of 71** | *"doesn't **seem** to install a bunch of the libs"* |
+| `llvm.org` | `python.org: '>=3<3.12'` | **50** | none |
+| `perl.org` | `llvm.org: <19` | **41** | none |
+
+LLVM contradicts the second one itself — `llvm/CMakeLists.txt:1102-1111` sets
+`LLVM_MINIMUM_PYTHON_VERSION 3.8` and calls `find_package(Python3 3.8
+REQUIRED)`: a floor and **no ceiling**. The bound plausibly belonged to a
+`distutils`-era llvm, which python 3.12 removed — correct for llvm ≤ 17, wrong
+for llvm 23, and the recipe had no way to say both. Now it does: a key in a
+dependency map that carries a version operator scopes its sub-map to the
+package's own version.
+
+```hcl
+build {
+  dependencies = {
+    "python.org" = ">=3"
+
+    # distutils, removed in python 3.12, is what the old ceiling was about
+    "<18" = { "python.org" = ">=3<3.12" }
+  }
+}
+```
+
+**Why a predicate is unambiguous as a key, and why no new syntax was needed.**
+The schema's `depKey` admits only `[A-Za-z0-9._+-]` segments, so a key carrying
+any of `< > = ^ ~ *` **cannot** be a project name or a platform key. The
+discriminator is this format's own grammar rather than a second one invented
+beside it, which is why it cannot drift from what the schema accepts. The
+predicate grammar is the one `if:` conditions already use on script steps, so a
+recipe has **one** way to say "at these versions".
+
+⚠ A bare `5.40` **is** a legal `depKey`, so it reads as a *project*. A scope
+must carry an operator: write `=5.40`, not `5.40`.
+
+⛔ More specific wins, in a fixed order — plain keys, then platform keys, then
+version scopes — so a project named both plainly and under a key reduces the
+same way every time. It was a single pass before, which let Go's randomised map
+iteration decide the winner; that affected **platform** sub-maps already, and
+adding a third kind of key only made the collision easy to write down.
+
+⛔ Two answers, because the callers ask different questions. A build knows which
+version it is building and gets the exact reduction. `closure`, `catalog`,
+`depgaps` and `spechash` walk a recipe set asking *"what does this project
+depend on?"* **before** any version is resolved, and for them a scoped
+dependency has one answer per version — so an unknown version **unions** the
+scopes and lets the stricter constraint win. A closure that over-constrains
+fails loudly at resolution (*"no version of X satisfies A and B"*); one that
+under-constrains resolves cleanly and ships an artifact linked against
+something the recipe never asked for.
+
 ## Naming a tree, not only a package
 
 A recipe describes one package: `versions`, `distributable`, `build`, `test`,
