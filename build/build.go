@@ -1013,14 +1013,34 @@ func SanitizedEnv(home, zpkgDir string) []string {
 	// does not apply to bk's downloads either. The two that do want it are
 	// tests, and `bk test` adds it there on purpose — see cmd/zpkb/test.go.
 	// Privilege where the need was measured, and not one caller wider.
-	for _, k := range []string{"LANG", "LOGNAME", "USER", "TERM", "ZPKG_PANTRY_DIR", "ZPKG_PANTRY_PATH",
-		"ZPKG_DIST", "ZPKG_CACHE", "ZPKG_PANTRY", "ZPKG_PANTRY_OVERLAY", "ZPKG_VERIFY",
-		"LD_LIBRARY_PATH", "QEMU_RESERVED_VA"} {
+	for _, k := range PassThroughEnv {
 		if v, ok := os.LookupEnv(k); ok {
 			env = append(env, k+"="+v)
 		}
 	}
 	return env
+}
+
+// PassThroughEnv names the variables SanitizedEnv forwards from the caller's
+// environment when it has them, as opposed to the ones above that it always
+// sets. Each is justified in the comments inside SanitizedEnv.
+//
+// ⛔ IT IS A PACKAGE-LEVEL LIST RATHER THAN A LITERAL INSIDE THE LOOP because
+// it is read twice now. `zpkb lint --require-known-env` (go-zpkg/zpkb#494)
+// refuses a recipe that reads a build variable this builder does not provide,
+// and these are provided — CONDITIONALLY, so they do not appear in
+// SanitizedEnv's RESULT unless the linting process happens to have them set.
+// A check built on the result alone would therefore refuse a recipe reading
+// `$ZPKG_PANTRY` on any machine that had not exported it, which is a false
+// refusal that depends on the tester's shell.
+//
+// Copying the names into that check instead would have made a second list free
+// to drift from this one — which is the exact defect go-zpkg/zpkb#494 exists to
+// catch, since four recipes shipped reading a variable whose name had moved.
+var PassThroughEnv = []string{
+	"LANG", "LOGNAME", "USER", "TERM", "ZPKG_PANTRY_DIR", "ZPKG_PANTRY_PATH",
+	"ZPKG_DIST", "ZPKG_CACHE", "ZPKG_PANTRY", "ZPKG_PANTRY_OVERLAY", "ZPKG_VERIFY",
+	"LD_LIBRARY_PATH", "QEMU_RESERVED_VA",
 }
 
 // autotools file tiers, oldest → newest, so outputs end up newer than inputs.
