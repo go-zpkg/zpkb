@@ -845,3 +845,194 @@ func TestLintTheTwoRatchetsAreIndependent(t *testing.T) {
 		t.Errorf("a provenance regression must fail even with fragments at their ceiling: rc=%d\n%s", rc, errb)
 	}
 }
+
+// ⛔⛔ THE LINE go-zpkg/pantry-overlay#138 FIXED, and the live spelling beside
+// it. The kernel recipe passed `CC="$ZBK_CC_FREESTANDING"` to make while the
+// builder exports `ZPKB_CC_FREESTANDING`, so the kernel compiled with an empty
+// CC — and a command-line assignment beats kbuild's own.
+//
+// BOTH SPELLINGS, in one tree, because only the pair proves the check
+// discriminates: a check that refused every `$ZPKB_*` would satisfy the first
+// assertion on its own and be useless.
+func TestLintRefusesADeadBuilderVariableAndAcceptsTheLiveOne(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		// kernel.org/linux's, as it was merged.
+		"dead.org/package.hcl": `build {
+  script = ["make CC=\"$ZBK_CC_FREESTANDING\" vmlinux"]
+}
+`,
+		"live.org/package.hcl": `build {
+  script = ["make CC=\"$ZPKB_CC_FREESTANDING\" vmlinux"]
+}
+`,
+	})
+	rc, _, errb := lint(t, "--dir", dir, "--require-known-env")
+	if rc != 1 {
+		t.Fatalf("a dead builder variable must fail: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(errb, "dead.org: build: $ZBK_CC_FREESTANDING") {
+		t.Errorf("want the project, the block and the name:\n%s", errb)
+	}
+	if strings.Contains(errb, "live.org") {
+		t.Errorf("ZPKB_CC_FREESTANDING is exported and must not be reported:\n%s", errb)
+	}
+}
+
+// ⛔ PER TREE, like --require-hcl and --require-provenance. Upstream's pantry is
+// pkgx's, where `$PKGX_DIR` is CORRECT because pkgx exports it, and 186 of our
+// own recipes still resolve against that corpus. Without the flag this check
+// must be silent.
+func TestLintIsSilentAboutBuilderVariablesWithoutTheFlag(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"dead.org/package.hcl": `build {
+  script = ["echo $PKGX_DIR $ZBK_CC_FREESTANDING $BREWKIT_TARGET"]
+}
+`,
+	})
+	if rc, _, errb := lint(t, "--dir", dir); rc != 0 {
+		t.Fatalf("without --require-known-env this must pass: rc=%d\n%s", rc, errb)
+	}
+}
+
+// ⛔⛔ THE FALSE REFUSAL THIS CHECK COULD EASILY HAVE SHIPPED. ZPKG_PANTRY and
+// its neighbours are PASS-THROUGH: SanitizedEnv forwards them only when the
+// caller's environment has them, so they are absent from its RESULT in any
+// process that did not export them — this test process included. A check built
+// on that result alone would refuse a correct recipe on one machine and accept
+// it on another, which is why build.PassThroughEnv exists as a list.
+//
+// t.Setenv is deliberately NOT used: the point is that the names are known
+// WITHOUT being set.
+func TestLintAcceptsAPassThroughVariableThatIsNotSetHere(t *testing.T) {
+	if _, ok := os.LookupEnv("ZPKG_PANTRY"); ok {
+		t.Skip("ZPKG_PANTRY is set in this environment, which is the case this test is not about")
+	}
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": `build {
+  script = ["echo $ZPKG_PANTRY $ZPKG_DIR"]
+}
+`,
+	})
+	if rc, _, errb := lint(t, "--dir", dir, "--require-known-env"); rc != 0 {
+		t.Fatalf("a pass-through variable must be known even when unset: rc=%d\n%s", rc, errb)
+	}
+}
+
+// ⚠ NOT A SHELL LINTER. A recipe's script is the project's own build system,
+// and a variable its configure exports — or one the project's own README tells
+// you to set — is none of our business. Only our namespaces are judged.
+func TestLintIgnoresVariablesOutsideOurNamespaces(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": `build {
+  script = ["echo $ACLOCAL_PATH $HOMEBREW_PREFIX $SOME_PROJECT_THING"]
+}
+`,
+	})
+	if rc, _, errb := lint(t, "--dir", dir, "--require-known-env"); rc != 0 {
+		t.Fatalf("variables outside our namespaces must be ignored: rc=%d\n%s", rc, errb)
+	}
+}
+
+// A recipe may define a variable of its own and read it back — kernel.org/linux
+// sets KERNEL_IMAGE in one step and reads it two steps later, and a recipe's
+// `env` block renders as `export K=…` ahead of the script. Both spellings must
+// exempt the name, including one in our own namespace.
+func TestLintAcceptsAVariableTheRecipeSetsItself(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": `build {
+  env = { ZPKG_LOCAL_THING = "x" }
+  script = [
+    "KERNEL_IMAGE=vmlinux",
+    "make $KERNEL_IMAGE",
+    "echo $ZPKG_LOCAL_THING",
+  ]
+}
+`,
+	})
+	if rc, _, errb := lint(t, "--dir", dir, "--require-known-env"); rc != 0 {
+		t.Fatalf("a variable the recipe assigns itself must be accepted: rc=%d\n%s", rc, errb)
+	}
+}
+
+// The test block is read too, not only build: a test that reads a dead variable
+// fails in the same silent way.
+func TestLintJudgesTheTestBlockAsWellAsBuild(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": `build {
+  script = ["make install"]
+}
+
+test {
+  script = ["cc t.c -o t -L$PKGX_DIR/lib"]
+}
+`,
+	})
+	rc, _, errb := lint(t, "--dir", dir, "--require-known-env")
+	if rc != 1 {
+		t.Fatalf("a dead variable in the test block must fail: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(errb, "a.org: test: $PKGX_DIR") {
+		t.Errorf("want the block named as `test`:\n%s", errb)
+	}
+}
+
+// ⛔ A SCRIPT THE RENDERER REFUSES IS --render-scripts' FINDING, NOT THIS ONE,
+// and the two must not both report it: one defect printed twice reads as two.
+//
+// The shape is openucx.org's, the recipe --render-scripts was written for: a
+// script entry that is a one-key MAP with no `run`, which `renderRun(nil)`
+// refuses. --require-known-env can say nothing about a script it cannot render,
+// so it skips the block — and the pair of assertions here is what shows the
+// division of labour rather than an accidental silence.
+func TestLintLeavesAnUnrenderableScriptToRenderScripts(t *testing.T) {
+	tree := map[string]string{
+		"a.org/package.hcl": `build {
+  script = [{ "some key" = "no run here" }]
+}
+`,
+	}
+	// Alone, it has nothing to say: the block never rendered.
+	dir := lintTree(t, tree)
+	if rc, _, errb := lint(t, "--dir", dir, "--require-known-env"); rc != 0 {
+		t.Fatalf("an unrenderable script is not this check's finding: rc=%d\n%s", rc, errb)
+	}
+	// And the check that owns it still reports it.
+	rc, _, errb := lint(t, "--dir", dir, "--render-scripts")
+	if rc != 1 {
+		t.Fatalf("--render-scripts must still refuse it: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(errb, "cannot be rendered") {
+		t.Errorf("want --render-scripts' own message:\n%s", errb)
+	}
+}
+
+// `${NAME:-default}` is a reference like any other, and the modifier must not
+// end up in the reported name. The dead spelling inside a default is still read.
+//
+// ⛔ THE FIXTURE IS WRITTEN `$${` AND THE FIRST VERSION WAS NOT, which made this
+// test pass for the wrong reason: HCL parsed `${ZBK_PREFIX:-…}` as an
+// interpolation, the recipe did not load, and `rc == 1` came from "cannot be
+// read" rather than from this check. The second assertion is what caught it —
+// the same escape go-zpkg/pantry-overlay#131, go-zpkg/pantry-overlay#133 and
+// go-zpkg/pantry-overlay#137 each needed. ⛔ Each repository is spelled out
+// because a bare `#133` in THIS repository means go-zpkg/zpkb#133, a different
+// issue entirely — `prbody` refused the first version of this change's pull
+// request body for exactly that.
+func TestLintReadsBracedReferencesWithModifiers(t *testing.T) {
+	dir := lintTree(t, map[string]string{
+		"a.org/package.hcl": `build {
+  script = ["./configure --prefix=$${ZBK_PREFIX:-/usr/local}"]
+}
+`,
+	})
+	rc, _, errb := lint(t, "--dir", dir, "--require-known-env")
+	if rc != 1 {
+		t.Fatalf("a braced dead reference must fail: rc=%d\n%s", rc, errb)
+	}
+	if !strings.Contains(errb, "$ZBK_PREFIX") {
+		t.Errorf("want the name without its modifier:\n%s", errb)
+	}
+	if strings.Contains(errb, "ZBK_PREFIX:-") {
+		t.Errorf("the modifier leaked into the name:\n%s", errb)
+	}
+}

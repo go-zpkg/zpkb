@@ -7,9 +7,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/go-zpkg/zpkb/build"
 	"github.com/go-zpkg/zpkb/buildscript"
 	"github.com/go-zpkg/zpkb/recipefile"
 )
@@ -126,6 +128,47 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// one block was the only refusal in the tree, so zero is where this starts.
 	renderScripts := fset.Bool("render-scripts", false,
 		"fail a recipe whose build or test script the builder's own renderer cannot render")
+	// ⛔⛔ FOUR RECIPES SHIPPED READING A VARIABLE THIS BUILDER DOES NOT EXPORT,
+	// across THREE sweeps that each believed they were the last
+	// (go-zpkg/zpkb#494):
+	//
+	//	kernel.org/linux:75   $ZBK_CC_FREESTANDING   is ZPKB_CC_FREESTANDING
+	//	unbound.net:17        $PKGX_DIR              is ZPKG_DIR
+	//	llvm.org:184          $PKGX_DIR              is ZPKG_DIR
+	//	rust-lang.org/cargo   BREWKIT_TARGET         is ZPKB_TARGET
+	//
+	// A shell expands an unset variable to the empty string and exits 0, so
+	// every one of these is SILENT: no build fails and no test looks. The worst
+	// was not a dropped flag — unbound's `sed -i -e "s|$PKGX_DIR/|…|g"` ran as
+	// `s|/|…|g`, replacing every slash in an installed script, and the next line
+	// deleted the .bak that would have shown it. The kernel's passed `CC=""` on
+	// a make command line, which beats kbuild's own assignment.
+	//
+	// go-zpkg/pantry-overlay#97, which moved these recipes to the MIDDLE spelling
+	// of the prefix, predicted this in its own description: "a recipe switched
+	// ahead of it reads an UNSET variable, and for these two that is silent". It
+	// was right, and it happened again to one of the two recipes it described,
+	// because the prefix it moved them to was itself renamed afterwards. Prose
+	// cannot close this; a check can.
+	//
+	// THE AUTHORITY IS THE EXPORTER ITSELF: buildscript.ExportedNames() renders
+	// `Wrap`/`WrapTest` across every mode and reads the names back out, and
+	// build.PassThroughEnv names what SanitizedEnv forwards. A list written here
+	// would be a fifth copy of the information that already drifted four times.
+	//
+	// ⛔ PER TREE, like its three neighbours above, and for the sharper reason:
+	// upstream's pantry is pkgx's, where `$PKGX_DIR` is CORRECT — pkgx exports
+	// it. An unconditional check would refuse the foreign corpus 186 of our own
+	// recipes still resolve against, for reading a variable that is right in its
+	// own builder. A requirement about what OUR builder provides belongs to the
+	// invocation pointed at OUR recipes.
+	//
+	// ⭐ NO RATCHET: measured over go-zpkg/pantry-overlay at 233 recipes after
+	// go-zpkg/pantry-overlay#138 fixed the kernel's, this reports ZERO, so a
+	// stated ceiling would be slack where none is needed.
+	requireKnownEnv := fset.Bool("require-known-env", false,
+		"fail a recipe whose script reads a build-environment variable in our own "+
+			"namespaces that the builder does not export")
 	// ⛔⛔ A GATE THAT STARTS RED IS NOT A GATE, IT IS A LIGHT NOBODY READS, and
 	// pantry-overlay's own ci.yml carries that lesson already: its lint step
 	// invoked a module path that no longer existed, so every pull request after
@@ -207,7 +250,29 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	var bad, unrecorded, fragments, signedSha, unrendered []string
+	// Built once, before the walk: rendering the wrapper in every mode for each
+	// of 233 recipes would be the same answer 233 times.
+	var knownEnv map[string]bool
+	if *requireKnownEnv {
+		knownEnv = map[string]bool{}
+		for _, n := range buildscript.ExportedNames() {
+			knownEnv[n] = true
+		}
+		// The names SanitizedEnv always sets, taken from its OUTPUT rather than
+		// restated: `PATH=…`, `ZPKG_DIR=…` and the rest.
+		for _, kv := range build.SanitizedEnv("", "") {
+			if i := strings.IndexByte(kv, '='); i > 0 {
+				knownEnv[kv[:i]] = true
+			}
+		}
+		// And the ones it forwards only when the caller has them, which is why
+		// the list exists separately from the result.
+		for _, n := range build.PassThroughEnv {
+			knownEnv[n] = true
+		}
+	}
+
+	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv []string
 	for _, proj := range projects {
 		// The project's DIRECTORY rather than (dir, project): the loader that
 		// takes a pantry and a project joins `projects/` in, which is right for
@@ -253,6 +318,30 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 				}
 			}
 		}
+		if *requireKnownEnv {
+			for _, block := range []string{"build", "test"} {
+				b, ok := doc[block].(map[string]any)
+				if !ok || b["script"] == nil {
+					continue
+				}
+				// The whole BLOCK rather than its `script`, which the check
+				// above passes: Generate's map branch prepends the recipe's own
+				// `env` as `export K=…` lines, so the rendered text carries both
+				// the references to check and the recipe's own assignments that
+				// exempt them. Handing it `b["script"]` alone would refuse a
+				// recipe for reading a variable it sets itself two lines up.
+				script, err := buildscript.Generate(b, buildscript.Options{})
+				if err != nil {
+					// Unrenderable is --render-scripts' finding, not this one.
+					// Reporting it twice would make one defect look like two.
+					continue
+				}
+				for _, name := range unknownEnvRefs(script, knownEnv) {
+					unknownEnv = append(unknownEnv,
+						fmt.Sprintf("  %s: %s: $%s", proj, block, name))
+				}
+			}
+		}
 	}
 	fmt.Fprintf(stdout, "%d recipe(s) read from %s\n", len(projects), root)
 	// Judged on the NAMES, from the same walk that produced the count above. A
@@ -275,6 +364,16 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"recipe and `buildscript` rendering its script are different questions, and only this "+
 			"one is asked here (go-zpkg/pantry-overlay#107):\n", len(unrendered), len(projects))
 		fmt.Fprintln(stderr, strings.Join(unrendered, "\n"))
+	}
+	if len(unknownEnv) > 0 {
+		sort.Strings(unknownEnv)
+		fmt.Fprintf(stderr, "%d reference(s) in %d project(s) read a build-environment variable "+
+			"in our own namespaces that this builder does not export, so the shell expands it to "+
+			"the EMPTY STRING and exits 0 — no build fails and no test looks. Four recipes shipped "+
+			"one across three sweeps, the last passing `CC=\"\"` to a kernel build "+
+			"(go-zpkg/zpkb#494). The names the builder does provide come from "+
+			"buildscript.ExportedNames() and build.PassThroughEnv:\n", len(unknownEnv), len(projects))
+		fmt.Fprintln(stderr, strings.Join(unknownEnv, "\n"))
 	}
 	if len(notHCL) > 0 {
 		sort.Strings(notHCL)
@@ -373,6 +472,12 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	if len(unrendered) > 0 {
 		return 1
 	}
+	// No ceiling either, for the reason given where the flag is declared: the
+	// tree this was written for reports zero once go-zpkg/pantry-overlay#138
+	// is in.
+	if len(unknownEnv) > 0 {
+		return 1
+	}
 	return 0
 }
 
@@ -434,6 +539,61 @@ func shaNamesASignature(distributable any) string {
 		}
 	}
 	return ""
+}
+
+// envRefRE matches a shell variable REFERENCE: `$NAME` and `${NAME…}`, the
+// second form including the modifiers a reference may carry (`${NAME:-default}`,
+// `${NAME:+…}`), so the name is captured and the modifier ignored.
+//
+// `$$NAME` is not excluded here and does not need to be: by the time a script
+// reaches this check, HCL has already turned `$${` into `${`, so what is read
+// is what the shell will read. That escape is a recipe-authoring concern
+// (go-zpkg/pantry-overlay#131), not a shell one.
+var envRefRE = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// envAssignRE matches a name the script ASSIGNS itself, in either spelling a
+// rendered recipe uses: `export NAME=` from an `env` block, and a bare
+// `NAME=value` written in a script step (kernel.org/linux sets KERNEL_IMAGE
+// that way, then reads it two steps later).
+var envAssignRE = regexp.MustCompile(`(?m)(?:^[[:space:]]*|export[[:space:]]+)([A-Za-z_][A-Za-z0-9_]*)=`)
+
+// unknownEnvRefs names the variables a rendered script reads that are in one of
+// OUR namespaces, that the builder does not export, and that the script does
+// not set itself — sorted, each reported once however often it is read.
+//
+// ⚠ THE NAMESPACE FILTER IS WHAT KEEPS THIS FROM BEING A SHELL LINTER. A
+// recipe's script is a project's own build system; `$ACLOCAL_PATH`,
+// `$HOMEBREW_PREFIX` or a variable the project's configure exports are none of
+// our business, and refusing them would be an opinion about other people's
+// builds. A misspelt name under `ZPKB_`/`ZPKG_` — or ANY name under the dead
+// `ZBK_`/`BK_`/`BREWKIT_`/`PKGX_` — is always ours and always a defect.
+func unknownEnvRefs(script string, known map[string]bool) []string {
+	local := map[string]bool{}
+	for _, m := range envAssignRE.FindAllStringSubmatch(script, -1) {
+		local[m[1]] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range envRefRE.FindAllStringSubmatch(script, -1) {
+		name := m[1]
+		if known[name] || local[name] || seen[name] {
+			continue
+		}
+		ours := false
+		for _, p := range buildscript.OurEnvPrefixes {
+			if strings.HasPrefix(name, p) {
+				ours = true
+				break
+			}
+		}
+		if !ours {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 var essentials = []string{"versions", "distributable", "build"}
