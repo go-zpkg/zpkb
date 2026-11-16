@@ -170,7 +170,7 @@ func TestDepTokens(t *testing.T) {
 	toks, _, err := DepTokens(
 		map[string]any{"openssl.org": "^1.1"},
 		map[string]any{"freedesktop.org/pkg-config": "^0.29"},
-		lin(), "/opt/pkgx", resolve)
+		lin(), "/opt/pkgx", resolve, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,11 +192,11 @@ func TestDepTokens(t *testing.T) {
 		t.Error("build dep pkg-config token missing")
 	}
 	// resolve error propagates
-	if _, _, err := DepTokens(map[string]any{"x": "1"}, nil, lin(), "/p", func(string, string) (string, error) { return "", errBoom }); err == nil {
+	if _, _, err := DepTokens(map[string]any{"x": "1"}, nil, lin(), "/p", func(string, string) (string, error) { return "", errBoom }, ""); err == nil {
 		t.Error("expected resolve error")
 	}
 	// empty deps → no tokens
-	if tk, _, _ := DepTokens(nil, nil, lin(), "/p", resolve); len(tk) != 0 {
+	if tk, _, _ := DepTokens(nil, nil, lin(), "/p", resolve, ""); len(tk) != 0 {
 		t.Errorf("empty = %v", tk)
 	}
 }
@@ -739,7 +739,7 @@ func TestDepTokensReturnsWhatItResolved(t *testing.T) {
 	_, deps, err := DepTokens(
 		map[string]any{"openssl.org": "^1.1"},
 		map[string]any{"go.dev": "^1.27"},
-		lin(), "/opt/pkgx", resolve)
+		lin(), "/opt/pkgx", resolve, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,7 +764,7 @@ func TestDepTokensReturnsWhatItResolved(t *testing.T) {
 		t.Errorf("the resolved list is not sorted: %+v", deps)
 	}
 	// And no deps means no list, rather than a list of nothing.
-	if _, none, _ := DepTokens(nil, nil, lin(), "/p", resolve); len(none) != 0 {
+	if _, none, _ := DepTokens(nil, nil, lin(), "/p", resolve, ""); len(none) != 0 {
 		t.Errorf("empty deps produced %+v", none)
 	}
 }

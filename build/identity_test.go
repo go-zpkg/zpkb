@@ -247,7 +247,7 @@ func TestADependencysOwnBuildReachesTheIdentityThroughItsPrefix(t *testing.T) {
 	// is the documented honest behaviour, not a hash we invented.
 	_, resolved, err := DepTokens(
 		map[string]any{dep: "^1"}, nil, idTarget, store,
-		func(string, string) (string, error) { return depVer, nil })
+		func(string, string) (string, error) { return depVer, nil }, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestADependencysOwnBuildReachesTheIdentityThroughItsPrefix(t *testing.T) {
 	}
 	_, resolved, err = DepTokens(
 		map[string]any{dep: "^1"}, nil, idTarget, store,
-		func(string, string) (string, error) { return depVer, nil })
+		func(string, string) (string, error) { return depVer, nil }, "")
 	if err != nil {
 		t.Fatal(err)
 	}

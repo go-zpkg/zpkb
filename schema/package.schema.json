@@ -170,8 +170,8 @@
     },
     "depMap": {
       "type": ["object", "null"],
-      "description": "project → constraint, optionally nested under a platform key (darwin|linux|windows[/arch] or <arch>)",
-      "propertyNames": { "$ref": "#/$defs/depKey" },
+      "description": "project → constraint, optionally nested under a platform key (darwin|linux|windows[/arch] or <arch>) OR under a VERSION SCOPE — a semver predicate on the version of THIS package, such as `<18` or `>=3<3.12`, whose sub-map applies only to the versions satisfying it. ⛔ WHY A VERSION SCOPE EXISTS: a recipe resolves many versions and used to state one dependency block, so every bound had to satisfy all of them — in practice the most restrictive requirement of the OLDEST resolvable version, which the newest then paid for forever. Measured (go-zpkg/zpkb#488): llvm.org's `cmake.org: '>=3<3.29'` excluded 69 of cmake's 71 versions, and its `python.org: '>=3<3.12'` excluded 50 of python's although LLVM 23.1.5's own llvm/CMakeLists.txt:1102-1111 sets LLVM_MINIMUM_PYTHON_VERSION 3.8 with NO ceiling — the bound belonged to a distutils-era llvm and there was no way to say so. ⭐ WHY A PREDICATE IS UNAMBIGUOUS HERE: depKey admits only [A-Za-z0-9._+-] segments, so a key holding any of < > = ^ ~ * cannot be a project or a platform; the discriminator is this schema's own grammar rather than a second one. ⚠ A bare `5.40` IS a legal depKey and therefore reads as a PROJECT — a scope must carry an operator, so write `=5.40`. ⛔ RESOLUTION ORDER, because one project may appear in more than one place: plain keys first, then platform, then version scope, each overriding the previous (build.reduceDepMap). A reduction that does not know the package's version — `closure`, `catalog`, `depgaps`, `spechash` all walk the pantry before anything is resolved — UNIONS the scopes and lets the stricter constraint win, because a closure that over-constrains fails loudly at resolution while one that under-constrains ships an artifact linked against something the recipe never asked for.",
+      "propertyNames": { "$ref": "#/$defs/depMapKey" },
       "additionalProperties": {
         "oneOf": [
           { "$ref": "#/$defs/constraint" },
@@ -182,6 +182,19 @@
           }
         ]
       }
+    },
+    "depMapKey": {
+      "description": "a TOP-LEVEL key of a dependency map: a depKey (project or platform) or a version scope. ⛔ Only at the top level: a SUB-map's keys are projects, so the nested propertyNames stays depKey — a scope inside a scope would be a second question about the same version and nothing reduces it.",
+      "oneOf": [
+        { "$ref": "#/$defs/depKey" },
+        { "$ref": "#/$defs/versionScopeKey" }
+      ]
+    },
+    "versionScopeKey": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "a semver predicate scoping a dependency sub-map to the versions of THIS package that satisfy it: `<18`, `>=3<3.12`, `^2`, `~3.5`, `=5.40`. It MUST contain at least one of < > = ^ ~ * — that is what makes it distinguishable from a depKey, whose charset excludes all six, and it is why a bare `5.40` is read as a project name instead. The grammar is the same one `if:` conditions already use on script steps (buildscript.matchGuard), so a recipe has one way to say \"at these versions\" rather than two.",
+      "pattern": "^[A-Za-z0-9._+*^~<>=|, -]*[<>=^~*][A-Za-z0-9._+*^~<>=|, -]*$"
     },
     "depKey": {
       "type": "string",
