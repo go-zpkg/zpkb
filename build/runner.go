@@ -213,7 +213,11 @@ func (r *Runner) Plan(recipe *pantry.Recipe, project, constraint string, tgt tar
 	}
 	p.Tag = tag
 
-	p.deps = EvalLinkDeps(recipe.Dependencies, tgt)
+	// ⭐ `version` is resolved above, before any dependency is reduced, so every
+	// reduction in this function can be EXACT about a version scope rather than
+	// unioning it. That ordering is why the feature is possible here and nowhere
+	// else: a closure walk has no version at all (see ReduceDepsAt).
+	p.deps = EvalLinkDepsAt(recipe.Dependencies, tgt, version)
 	bd := buildDeps(recipe)
 	if r.Bootstrap {
 		_, p.selfDropped = bd[project]
@@ -223,12 +227,12 @@ func (r *Runner) Plan(recipe *pantry.Recipe, project, constraint string, tgt tar
 			p.fromHost = append(p.fromHost, project)
 		}
 	}
-	p.toolDeps = EvalToolDeps(project, recipe.Dependencies, bd, tgt)
+	p.toolDeps = EvalToolDepsAt(project, recipe.Dependencies, bd, tgt, version)
 	if r.Bootstrap {
 		p.toolDeps = BootstrapToolDeps(bd, tgt)
 	}
 	if r.ResolveDep != nil {
-		dt, resolved, err := DepTokens(recipe.Dependencies, bd, tgt, config.ZpkgDir(), r.ResolveDep)
+		dt, resolved, err := DepTokens(recipe.Dependencies, bd, tgt, config.ZpkgDir(), r.ResolveDep, version)
 		if err != nil {
 			return p, fmt.Errorf("resolve deps: %w", err)
 		}

@@ -355,7 +355,10 @@ func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
 	// them, so offering their prefixes would render a path to something
 	// that is not there.
 	if strings.Contains(fmt.Sprint(rec.Test), "{{deps.") {
-		dt, _, err := build.DepTokens(rec.Dependencies, testDepMap(rec.Test), tgt, config.ZpkgDir(), resolveTestDep)
+		// `ver` is the version under test, so a version-scoped dependency is
+		// reduced exactly here too — a test environment that unioned the scopes
+		// would install a library the built artifact does not link.
+		dt, _, err := build.DepTokens(rec.Dependencies, testDepMap(rec.Test), tgt, config.ZpkgDir(), resolveTestDep, ver)
 		if err != nil {
 			return "", fmt.Errorf("resolve test deps: %w", err)
 		}

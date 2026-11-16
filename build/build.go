@@ -33,7 +33,66 @@ var (
 	// platformKey returns ok=false, reduceDepMap copies it through as a project
 	// name, and the recipe acquires a dependency on a project called "s390x".
 	osArchDepRE = regexp.MustCompile(`^(` + alternation(platforms) + `)/(` + alternation(arches) + `)$`)
+
+	// versionScopeRE matches a dependency-map key that scopes its sub-map to the
+	// PACKAGE'S OWN version, rather than naming a project or a platform:
+	//
+	//	build:
+	//	  dependencies:
+	//	    python.org: '>=3'
+	//	    '<18':
+	//	      python.org: '>=3<3.12'   # distutils
+	//
+	// ⛔⛔ IT IS NOT buildscript's `rangeRE`, WHICH ALREADY EXISTS AND WOULD BE
+	// THE OBVIOUS REUSE. That pattern is `^[v0-9*^~<>=]` — it classifies by the
+	// FIRST CHARACTER — and 26 projects in the upstream pantry begin with `v`:
+	// valgrind.org, vitejs.dev, videolan.org, vim.org, vtk.org, volta.sh and
+	// twenty more. Reusing it here would read every one of them as a version
+	// predicate, and then the fallback described at the top of this var block
+	// takes over: the key is copied through as a project name and the recipe
+	// acquires a dependency on a project that does not exist. rangeRE is safe
+	// where it is used, because an `if:` condition is never a project name, and
+	// unsafe the moment the same string can be either.
+	//
+	// ⭐ WHY THIS SHAPE INSTEAD: the authoritative `depKey` pattern in
+	// schema/package.schema.json admits only `[A-Za-z0-9._+-]` segments, so a
+	// key carrying any of `< > = ^ ~ *` CANNOT be a project name or a platform
+	// key. The discriminator is the schema's own grammar, not a second one
+	// invented here, which is why it cannot drift away from what the schema
+	// accepts.
+	//
+	// ⚠ ONE CONSEQUENCE, STATED BECAUSE IT WILL SURPRISE SOMEBODY: a bare
+	// `5.40` IS a legal depKey, so it reads as a PROJECT. A version scope must
+	// carry an operator — write `=5.40`, not `5.40`. The schema says the same.
+	versionScopeRE = regexp.MustCompile(`[<>=^~*]`)
 )
+
+// versionScope reports whether a dependency-map key scopes by the package's own
+// version, and if so whether the given version satisfies it.
+//
+// ⛔ FAIL-OPEN ON AN UNPARSEABLE RANGE, deliberately and to match
+// buildscript.matchGuard, whose comment says "an unrecognised condition does
+// not gate the step". Here the equivalent is: a scope nobody can evaluate
+// INCLUDES its dependencies. For a closure that is the conservative direction
+// — an over-approximation builds something, an under-approximation builds a
+// package missing a library — and the two readers of a recipe must not
+// disagree about the same string.
+//
+// An empty pkgVersion means the caller does not know which version is being
+// asked about: see reduceDepMap's own comment for why that unions.
+func versionScope(k, pkgVersion string) (isScope, satisfied bool) {
+	if !versionScopeRE.MatchString(k) {
+		return false, false
+	}
+	if pkgVersion == "" {
+		return true, true
+	}
+	v := artifact.ParseVer(pkgVersion)
+	if v.Raw == "" {
+		return true, true
+	}
+	return true, v.Satisfies(k)
+}
 
 func setOf(names []string) map[string]bool {
 	m := make(map[string]bool, len(names))
@@ -69,15 +128,86 @@ func alternation(set map[string]bool) string {
 // So there is one reduction, and everything that asks a question about a
 // dependency asks it the same way.
 func ReduceDeps(deps map[string]any, tgt target.Target) map[string]string {
-	return reduceDepMap(deps, tgt)
+	return reduceDepMap(deps, tgt, "")
 }
 
-func reduceDepMap(deps map[string]any, tgt target.Target) map[string]string {
+// ReduceDepsAt is ReduceDeps for a KNOWN package version, so a version-scoped
+// sub-map (see versionScopeRE) is kept only when that version satisfies it.
+//
+// ⛔⛔ THE TWO EXIST BECAUSE THE CALLERS ASK DIFFERENT QUESTIONS, and giving
+// them one answer would be wrong for one of them. A build knows exactly which
+// version it is building, so it wants the exact reduction. `closure`,
+// `catalog`, `depgaps` and `spechash` walk the pantry asking "what does this
+// project depend on?" BEFORE any version is resolved — and for them a
+// version-scoped dependency has no single answer, it has one per version.
+//
+// ⭐ So an unknown version UNIONS every scope, which is the same resolution
+// go-zpkg/zpkb#224 reached for the two halves of a recipe: when two readings
+// are both possible, the closure takes their union, because a closure that is
+// too large builds something and a closure that is too small builds a package
+// missing a dependency. The union is stated here rather than discovered by
+// whoever first sees `closure` report a constraint a build never applies.
+func ReduceDepsAt(deps map[string]any, tgt target.Target, pkgVersion string) map[string]string {
+	return reduceDepMap(deps, tgt, pkgVersion)
+}
+
+// reduceDepMap flattens project → constraint for the target, dropping
+// non-matching platform keys and version scopes and merging matching ones.
+//
+// pkgVersion is the version of the package WHOSE RECIPE THIS IS — not of any
+// dependency. Empty means "unknown", which unions the version scopes; see
+// ReduceDepsAt.
+// ⛔⛔ THREE PASSES, IN THIS ORDER, AND THE ORDER IS THE WHOLE CORRECTNESS
+// ARGUMENT — a single pass over `deps` is what the first version of this did
+// and it was NON-DETERMINISTIC.
+//
+// A recipe may name one project twice, once plainly and once under a key:
+//
+//	zlib.net: '^1'
+//	linux:
+//	  zlib.net: '^1.2'
+//
+// Both write flat["zlib.net"], so in one pass the winner is whichever key Go's
+// randomised map iteration reached last. ⛔ That bug PREDATES version scopes:
+// it applied to platform sub-maps already, and the same recipe could reduce
+// differently between two runs of the same binary. A new test caught it only
+// because adding a third kind of key made a collision easy to write down.
+//
+// So: plain keys, then platform, then version scope — each overriding the
+// previous. "More specific wins" is the rule a reader expects, and it is now a
+// rule rather than an accident.
+//
+// ⭐ WHY A SCOPE OVERRIDES EVEN WHEN THE VERSION IS UNKNOWN (the union case):
+// the scoped constraint is the STRICTER statement. A closure that
+// over-constrains fails loudly at resolution — "no version of X satisfies A
+// AND B" — while one that under-constrains resolves cleanly and ships an
+// artifact linked against something the recipe never asked for. Loud is the
+// direction to fail in, and this is the same reasoning go-zpkg/zpkb#224 used
+// for the union of a recipe's two halves.
+func reduceDepMap(deps map[string]any, tgt target.Target, pkgVersion string) map[string]string {
 	flat := map[string]string{}
+	mergeSub := func(v any) {
+		if sub, ok := v.(map[string]any); ok {
+			for sk, sv := range sub {
+				flat[sk] = valStr(sv)
+			}
+		}
+	}
+
+	// Pass 1: plain project keys.
+	for k, v := range deps {
+		if _, _, isKey := platformKey(k); isKey {
+			continue
+		}
+		if isScope, _ := versionScope(k, pkgVersion); isScope {
+			continue
+		}
+		flat[k] = valStr(v)
+	}
+	// Pass 2: platform keys that match the target.
 	for k, v := range deps {
 		os, arch, isKey := platformKey(k)
 		if !isKey {
-			flat[k] = valStr(v)
 			continue
 		}
 		if os != "" && os != tgt.Platform {
@@ -86,10 +216,12 @@ func reduceDepMap(deps map[string]any, tgt target.Target) map[string]string {
 		if arch != "" && arch != tgt.Arch {
 			continue
 		}
-		if sub, ok := v.(map[string]any); ok {
-			for sk, sv := range sub {
-				flat[sk] = valStr(sv)
-			}
+		mergeSub(v)
+	}
+	// Pass 3: version scopes the package version satisfies.
+	for k, v := range deps {
+		if isScope, satisfied := versionScope(k, pkgVersion); isScope && satisfied {
+			mergeSub(v)
 		}
 	}
 	return flat
@@ -97,8 +229,18 @@ func reduceDepMap(deps map[string]any, tgt target.Target) map[string]string {
 
 // DepSpecs reduces a recipe dependency map into pkgx pkgspecs
 // ("project@constraint") for the target, sorted for determinism.
+//
+// Version scopes are UNIONED here, because this form does not know which
+// version is being asked about — see ReduceDepsAt for why that is the right
+// default and DepSpecsAt for the exact form.
 func DepSpecs(deps map[string]any, tgt target.Target) []string {
-	flat := reduceDepMap(deps, tgt)
+	return DepSpecsAt(deps, tgt, "")
+}
+
+// DepSpecsAt is DepSpecs for a KNOWN package version, so a version-scoped
+// sub-map is kept only when that version satisfies it.
+func DepSpecsAt(deps map[string]any, tgt target.Target, pkgVersion string) []string {
+	flat := reduceDepMap(deps, tgt, pkgVersion)
 	specs := make([]string, 0, len(flat))
 	for p, c := range flat {
 		specs = append(specs, depSpec(p, c))
@@ -156,9 +298,15 @@ func SpecProject(spec string) string {
 // wrong one: `resolve` reaches the registry, and two resolutions a moment
 // apart are two ANSWERS — measured on this fleet, the same pantry commit gave
 // tcl 9.0.4 and 9.1.0 four hours apart.
-func DepTokens(runtime, buildDeps map[string]any, tgt target.Target, zpkgDir string, resolve func(project, constraint string) (string, error)) ([]moustache.Token, []moustache.Dep, error) {
-	flat := reduceDepMap(runtime, tgt)
-	for p, c := range reduceDepMap(buildDeps, tgt) {
+// ⛔ pkgVersion IS THE VERSION BEING BUILT, and it is a parameter rather than
+// something derived here because this function has no other way to know it:
+// `runtime` and `buildDeps` are the recipe's maps, and a version scope in them
+// is a statement about the PACKAGE, not about any dependency. Empty unions the
+// scopes, which is what a dry run and a closure walk want; the build passes the
+// real version so a scope that does not apply does not install anything.
+func DepTokens(runtime, buildDeps map[string]any, tgt target.Target, zpkgDir string, resolve func(project, constraint string) (string, error), pkgVersion string) ([]moustache.Token, []moustache.Dep, error) {
+	flat := reduceDepMap(runtime, tgt, pkgVersion)
+	for p, c := range reduceDepMap(buildDeps, tgt, pkgVersion) {
 		flat[p] = c
 	}
 	projects := make([]string, 0, len(flat))
@@ -381,7 +529,19 @@ func BaseToolchain() []string {
 // resolve, because they are the ones that end up as @rpath references in the
 // artefact. Nothing a build merely runs belongs here.
 func EvalLinkDeps(runtime map[string]any, tgt target.Target) []string {
-	return sortedSpecs(DepSpecs(runtime, tgt))
+	return EvalLinkDepsAt(runtime, tgt, "")
+}
+
+// EvalLinkDepsAt is EvalLinkDeps for a KNOWN package version.
+//
+// ⛔⛔ THIS IS THE ONE WHERE AN EXACT ANSWER MATTERS MOST, and the reason is the
+// comment above: these constraints become @rpath references in the artefact.
+// A version scope that the built version does not satisfy must not contribute a
+// link dependency — unioning here would put a library in the closure of a
+// version that was never supposed to link it, and the artefact would then
+// record a dependency nobody can explain from the recipe.
+func EvalLinkDepsAt(runtime map[string]any, tgt target.Target, pkgVersion string) []string {
+	return sortedSpecs(DepSpecsAt(runtime, tgt, pkgVersion))
 }
 
 // EvalToolDeps is the set a build RUNS: the recipe's build dependencies plus
@@ -403,7 +563,31 @@ func EvalLinkDeps(runtime map[string]any, tgt target.Target) []string {
 // EvalDeps gives below: its own published artifact must not shadow the thing
 // being built.
 func EvalToolDeps(project string, runtime, buildDeps map[string]any, tgt target.Target) []string {
-	out := DepSpecs(buildDeps, tgt)
+	return EvalToolDepsAt(project, runtime, buildDeps, tgt, "")
+}
+
+// EvalToolDepsAt is EvalToolDeps for a KNOWN package version.
+//
+// ⭐ THE MOTIVATING CASE FOR THE WHOLE VERSION SCOPE LIVES HERE. llvm.org's
+// recipe declares `python.org: '>=3<3.12'` as a BUILD dependency with no stated
+// reason, and the bound excludes 50 of python's resolvable versions. LLVM
+// 23.1.5's own llvm/CMakeLists.txt:1102-1111 sets
+// `LLVM_MINIMUM_PYTHON_VERSION 3.8` and calls `find_package(Python3 3.8
+// REQUIRED)` — a floor and no ceiling — so the bound has no basis in the newest
+// LLVM. It plausibly did have one for a distutils-era llvm, which 3.12 broke.
+//
+// One block could not say both, and the recipe had no way to scope the bound to
+// the versions that need it. With a version scope it can:
+//
+//	python.org: '>=3'
+//	'<18':
+//	  python.org: '>=3<3.12'
+//
+// measured in go-zpkg/zpkb#488 together with `cmake.org: '>=3<3.29'`, which
+// excludes 69 of cmake's 71 versions for a reason whose own wording hedges
+// ("doesn't SEEM to install a bunch of the libs").
+func EvalToolDepsAt(project string, runtime, buildDeps map[string]any, tgt target.Target, pkgVersion string) []string {
+	out := DepSpecsAt(buildDeps, tgt, pkgVersion)
 	// A recipe that names a toolchain project REPLACES the toolchain's pin, and
 	// it does so from either list. Splitting the closures must not turn that
 	// override into a coexistence: two perls in one build is the XS mismatch the
@@ -414,7 +598,7 @@ func EvalToolDeps(project string, runtime, buildDeps map[string]any, tgt target.
 	// — and the recipe's copy being first on PATH would not stop the toolchain's
 	// modules finding the other one.
 	named := map[string]bool{project: true}
-	for _, s := range DepSpecs(runtime, tgt) {
+	for _, s := range DepSpecsAt(runtime, tgt, pkgVersion) {
 		named[SpecProject(s)] = true
 	}
 	for _, s := range out {
@@ -671,7 +855,12 @@ func WithoutUnresolvable(buildDeps map[string]any, tgt target.Target,
 	// "available: 1" is the tell — the artifact WAS there, freshly built, and
 	// 1.4.21 satisfies "1". The judge has to ask what the subject asks.
 	keep := map[string]any{}
-	for proj, cons := range reduceDepMap(buildDeps, tgt) {
+	// ⚠ UNIONED, because this runs in bootstrap mode and asks the registry
+	// whether each build tool is installable at all. It has no package version
+	// in hand, and over-approximating here only means asking about a tool a
+	// version scope might exclude — the answer is then used to DROP tools, so
+	// the union can only keep more, never fewer.
+	for proj, cons := range reduceDepMap(buildDeps, tgt, "") {
 		if _, err := resolve(proj, cons); err != nil {
 			// "cannot install", not "no X here": perl.org WAS in the seed
 			// registry and still could not be installed, and a message that
