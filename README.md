@@ -220,6 +220,9 @@ recipes with no Deno/Ruby/patchelf runtime, and cross-builds cleanly.
 
 ## A dependency may be scoped to the package's own version
 
+*Since **v0.81.0**. A recipe cannot use a key the judge reading it does not
+know, so a pantry whose CI pins an older `zpkb` must move its pin first.*
+
 A recipe resolves many versions and states one `dependencies` block, so every
 bound in it has to satisfy all of them. In practice that means the most
 restrictive requirement of the **oldest** resolvable version, which the newest
