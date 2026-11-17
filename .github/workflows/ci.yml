@@ -49,12 +49,24 @@ jobs:
       # cut mid-rune, so grep refused it) is merged and unreleased; that costs
       # nothing while this is green and makes the output hard to read the day it
       # fires, so the pin rises to the release carrying it.
+      # ⛔⛔ AND THIS FILE IS THE FOURTH --allow, BECAUSE A CHECK FOR X CANNOT
+      # AVOID CONTAINING X. `--old pantry-overlay` is the step's own argument
+      # and `.yml` is in staleref's DEFAULT extension set, so the first version
+      # of this step failed on ITSELF. staleref records the same shape about its
+      # own source — run over cmd/staleref it reported 15 DOUBLED, every one a
+      # comment explaining the defect it checks for.
+      #
+      # ⚠ THE COST IS REAL AND IS NOT HIDDEN: this exempts the whole workflow
+      # file. It is the narrowest instrument the tool has (--allow is per file),
+      # the exemption is COUNTED and printed on every run, and the alternative —
+      # moving the invocation into a file the sweep does not read — would hide
+      # it rather than declare it.
       - name: nothing still points at go-zpkg/pantry-overlay
         run: >
           go run github.com/go-fleettools/fleettools/cmd/staleref@v0.130.0
           --old pantry-overlay --new recipes --ext go
           --allow cmd/zpkb/main.go --allow cmd/zpkb/main_test.go
-          --allow config/retired.go .
+          --allow config/retired.go --allow .github/workflows/ci.yml .
       # -race, because a concurrency guard that cannot fire is not a guard.
       # tailWriter took a whole darwin/x86-64 factory run down with
       #   panic: runtime error: slice bounds out of range [43:0]
