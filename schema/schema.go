@@ -12,7 +12,7 @@
 // CLOSED, and the claim is the measurement that justified closing them, taken
 // 2026-11-07 with schema/corpuskeys_test.go:
 //
-//	go-zpkg/pantry-overlay   213 recipes    0 unknown keys
+//	go-zpkg/recipes          213 recipes    0 unknown keys
 //	go-zpkg/packages          14 recipes    0 unknown keys
 //	pkgxdev/pantry          1932 recipes   22 unknown keys in 42 recipes
 //

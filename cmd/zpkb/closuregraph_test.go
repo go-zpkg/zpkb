@@ -201,7 +201,7 @@ func TestClosureReadsTheOverlay(t *testing.T) {
 }
 
 // TestClosureMergesAReducedOverlayEntry is the regression that sent bk back to
-// this file. go-zpkg/pantry-overlay reduced its 183 entries to the keys they
+// this file. go-zpkg/recipes reduced its 183 entries to the keys they
 // change, and a walk that preferred the overlay's copy WHOLE then read a
 // fragment: `bk closure --build curl.se` collapsed from 54 projects to 8,
 // because the entry states `dependencies` and the walk never saw upstream's

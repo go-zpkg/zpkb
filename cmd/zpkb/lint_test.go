@@ -358,7 +358,7 @@ func TestLintStandalonePassesACompleteRecipe(t *testing.T) {
 }
 
 // ⛔⛔ AN OVERLAY ENTRY IS AN AMENDMENT, NOT A RECIPE, AND THE DIFFERENCE IS
-// INVISIBLE UNTIL THE TREE UNDERNEATH IS TAKEN AWAY. pantry-overlay#50 reduced
+// INVISIBLE UNTIL THE TREE UNDERNEATH IS TAKEN AWAY. recipes#50 reduced
 // all 183 entries to the keys they change — correct for a tree artifact merges
 // OVER pkgxdev/pantry, and the whole problem for a tree that must BE the base.
 // Measured when this was written: 15 of 213 overlay recipes state a
@@ -846,7 +846,7 @@ func TestLintTheTwoRatchetsAreIndependent(t *testing.T) {
 	}
 }
 
-// ⛔⛔ THE LINE go-zpkg/pantry-overlay#138 FIXED, and the live spelling beside
+// ⛔⛔ THE LINE go-zpkg/recipes#138 FIXED, and the live spelling beside
 // it. The kernel recipe passed `CC="$ZBK_CC_FREESTANDING"` to make while the
 // builder exports `ZPKB_CC_FREESTANDING`, so the kernel compiled with an empty
 // CC — and a command-line assignment beats kbuild's own.
@@ -1013,8 +1013,8 @@ func TestLintLeavesAnUnrenderableScriptToRenderScripts(t *testing.T) {
 // test pass for the wrong reason: HCL parsed `${ZBK_PREFIX:-…}` as an
 // interpolation, the recipe did not load, and `rc == 1` came from "cannot be
 // read" rather than from this check. The second assertion is what caught it —
-// the same escape go-zpkg/pantry-overlay#131, go-zpkg/pantry-overlay#133 and
-// go-zpkg/pantry-overlay#137 each needed. ⛔ Each repository is spelled out
+// the same escape go-zpkg/recipes#131, go-zpkg/recipes#133 and
+// go-zpkg/recipes#137 each needed. ⛔ Each repository is spelled out
 // because a bare `#133` in THIS repository means go-zpkg/zpkb#133, a different
 // issue entirely — `prbody` refused the first version of this change's pull
 // request body for exactly that.

@@ -114,7 +114,7 @@ func LoadFile(path string) (*pantry.Recipe, error) {
 // them itself, so it has the content and the name but no path to re-open. It
 // used to call pantry.Parse — the YAML front-end — on every one of them, which
 // made each `package.hcl` a parse error it then SKIPPED as malformed. Over
-// pantry-overlay that was 210 of 213 recipes examined by nobody, reported as
+// recipes that was 210 of 213 recipes examined by nobody, reported as
 // a clean result (go-zpkg/bk#389).
 func ParseNamed(b []byte, name string) (*pantry.Recipe, error) { return parse(b, name) }
 

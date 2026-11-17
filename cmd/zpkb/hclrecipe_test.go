@@ -12,7 +12,7 @@ import (
 // `recipefile` exists so one place decides what a recipe is called and how it
 // is read, and four commands still did it themselves with os.ReadFile +
 // pantry.Parse — the YAML front-end, unconditionally. They could not read a
-// `package.hcl` at all, while HCL is the default format: pantry-overlay holds
+// `package.hcl` at all, while HCL is the default format: recipes holds
 // 210 of them against 3 YAML (go-zpkg/bk#389).
 //
 // Every existing test of these commands used a YAML fixture, which is exactly
@@ -85,7 +85,7 @@ func TestBuildAndTestNoLongerFailInTheYAMLDecoder(t *testing.T) {
 // ⛔⛔ depgaps IS THE SERIOUS ONE, because it does not fail. It finds recipes
 // with recipefile.IsRecipe — so it picks up `package.hcl` — then parsed them
 // as YAML and took its "a recipe we cannot parse is a different problem" skip
-// on every one. Over pantry-overlay that was 210 of 213 recipes examined by
+// on every one. Over recipes that was 210 of 213 recipes examined by
 // nobody, and a clean, confident, silent result for the rest.
 //
 // The fixture is the proof: an HCL recipe with an unsatisfiable dependency.

@@ -1006,7 +1006,7 @@ func SanitizedEnv(home, zpkgDir string) []string {
 	// against a fresh pantry on 2026-10-05, that is not what uses it:
 	//
 	//	1899 recipes · 2 reference GITHUB_TOKEN · BOTH in their `test:` block
-	//	0 in go-zpkg/pantry-overlay
+	//	0 in go-zpkg/recipes
 	//	bk's own fetcher never sends it — fetch/ has no Authorization header
 	//
 	// So no build block in the pantry wants it, and the rate-limit argument

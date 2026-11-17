@@ -134,7 +134,7 @@ func LoadBuildRecipe(set *logical.Set, overlayDir, pantryDir, project string) (*
 //
 // Not the overlay preferred whole. That was right while every overlay entry
 // was a full copy of an upstream recipe, and it broke the day they stopped
-// being: go-zpkg/pantry-overlay reduced its 183 entries to the keys they
+// being: go-zpkg/recipes reduced its 183 entries to the keys they
 // change (go-zpkg/artifact#103), so reading one on its own gives a fragment.
 // Measured before this existed — `bk closure --build curl.se` went from 54
 // projects to 8, because the entry says `dependencies` and nothing else, and

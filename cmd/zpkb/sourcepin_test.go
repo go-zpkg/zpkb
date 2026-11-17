@@ -184,7 +184,7 @@ func TestSourcePinSignedPrintsTheProvenanceToPaste(t *testing.T) {
 	// read by nothing (#282). Three signed recipes moved it to the nearest key
 	// that did exist — `sha`, which means "where the expected SHA-256 is
 	// published" and which the build FETCHES — and would have failed at the
-	// fetch on every build (go-zpkg/pantry-overlay#89).
+	// fetch on every build (go-zpkg/recipes#89).
 	//
 	// A comment cannot be pasted as a field, which is the whole repair.
 	for _, forbidden := range []string{"sig    =", "sig =", "sig  ="} {

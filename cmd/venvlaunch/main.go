@@ -40,7 +40,7 @@
 // The repair is unnecessary because `seal` can make venv/bin/python a RELATIVE
 // symlink into the store — `../../../../python.org/<ver>/bin/python3` — and a
 // relative link survives the store moving, which is the same property
-// `@loader_path/../../..` already gives our rpaths (go-zpkg/pantry-overlay#28).
+// `@loader_path/../../..` already gives our rpaths (go-zpkg/recipes#28).
 //
 // So there is no ZPKG_PYTHON, no temporary file, no rename and no lock. A
 // read-only store works, an NFS home works, two hosts sharing one home work,

@@ -24,9 +24,10 @@ import (
 // Three occurrences are on the record:
 //
 //	gnu.org/diffutils  AC_PATH_PROG([PR_PROGRAM],[pr]) would have baked
-//	                   coreutils' bin/pr into `diff` (pantry-overlay#92)
+//	                   coreutils' bin/pr into `diff` (go-zpkg/recipes#92)
 //	gnu.org/findutils  AC_PATH_PROG([SORT],[sort]) would have baked coreutils'
-//	                   bin/sort into the installed `updatedb` (#93)
+//	                   bin/sort into the installed `updatedb`
+//	                   (go-zpkg/recipes#93)
 //	gnu.org/libtool    upstream's own artifact SHIPS one:
 //	                   : ${SED="/__w/_actions/pkgxdev/brewkit/v1/libexec/sed"}
 //	                   — three of ten recipes in one batch died on it
@@ -108,7 +109,7 @@ type bakedScan struct {
 // under `gofmt -l` and `go vet`, while the positive control — a line reading
 // `// +build dir so the pipeline's rename works` — is reformatted by gofmt and
 // rejected by vet with "misplaced +build comment" and "invalid non-alphanumeric
-// build constraint". Across go-zpkg/pantry-overlay's 222 recipes, ZERO carry a
+// build constraint". Across go-zpkg/recipes' 222 recipes, ZERO carry a
 // `+` in a version; with `+builddir` the semver collision needs a recipe to pin
 // literal build metadata spelled `builddir`, which nothing does. Should one ever
 // appear, the fix is to anchor on the INSTALL PREFIX's shape, not the suffix.
