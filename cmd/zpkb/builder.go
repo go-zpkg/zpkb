@@ -38,7 +38,7 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	bkBin := fs.String("zpkb", "", "path to a target-arch zpkb binary to install at /usr/local/bin/zpkb")
 	zpkxBin := fs.String("zpkx", "", "path to a target-arch zpkx binary to install at /usr/local/bin/zpkx")
 	dist := fs.String("dist", "", "artifact registry to install from (default $ZPKG_DIST)")
-	overlay := fs.String("overlay", "", "pantry overlay consulted before the upstream pantry (default $ZPKG_PANTRY_OVERLAY)")
+	overlay := fs.String("overlay", "", "pantry overlay consulted before the upstream pantry (default $ZPKG_RECIPES_OVERLAY)")
 	microvm := fs.Bool("microvm", false, "also write .weft-microvm/config.json so `weft microvm run` can boot the directory as-is")
 	container := fs.Bool("container", false, "also write /etc/ld.so.conf listing every staged library directory, so the tree runs as a CONTAINER root and not only under bk's build wrapper")
 	dryRun := fs.Bool("dry-run", false, "resolve the toolchain closure for --platform, print it, and stage nothing")
@@ -651,7 +651,7 @@ func writeMicroVMConfig(o stageOptions, closure []artifact.Resolved, zpkgDir str
 		env = append(env, "ZPKG_DIST="+o.Dist)
 	}
 	if o.Overlay != "" {
-		env = append(env, "ZPKG_PANTRY_OVERLAY="+o.Overlay)
+		env = append(env, "ZPKG_RECIPES_OVERLAY="+o.Overlay)
 	}
 	sort.Strings(env)
 

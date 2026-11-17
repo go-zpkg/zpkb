@@ -40,7 +40,7 @@ func cyclesOf(t *testing.T, args ...string) (string, string) {
 // connected components rather than the back edges the walk happened to find.
 func TestClosureNamesTheCyclesItBreaks(t *testing.T) {
 	p := cyclePantry(t)
-	base := []string{"--pantry", p, "--platform", "linux/x86-64"}
+	base := []string{"--recipe-dir", p, "--platform", "linux/x86-64"}
 
 	out, _ := cyclesOf(t, append(append([]string{}, base...), "--cycles", "curl.org", "gcc.org")...)
 	got := strings.Split(strings.TrimSpace(out), "\n")
@@ -68,7 +68,7 @@ func TestClosureNamesTheCyclesItBreaks(t *testing.T) {
 // traversal decided. It is not optional output.
 func TestClosureWarnsThatPartOfTheOrderIsAGuess(t *testing.T) {
 	p := cyclePantry(t)
-	base := []string{"--pantry", p, "--platform", "linux/x86-64"}
+	base := []string{"--recipe-dir", p, "--platform", "linux/x86-64"}
 
 	out, errb := cyclesOf(t, append(append([]string{}, base...), "--build", "curl.org")...)
 	if !strings.Contains(errb, "the order WITHIN each is a guess") {
@@ -92,7 +92,7 @@ func TestClosureWarnsThatPartOfTheOrderIsAGuess(t *testing.T) {
 	q := t.TempDir()
 	writeClosureRecipe(t, q, "app.org", "dependencies:\n  lib.org: '*'\nbuild: make\n")
 	writeClosureRecipe(t, q, "lib.org", "build: make\n")
-	if _, errb := cyclesOf(t, "--pantry", q, "--platform", "linux/x86-64", "--build", "app.org"); errb != "" {
+	if _, errb := cyclesOf(t, "--recipe-dir", q, "--platform", "linux/x86-64", "--build", "app.org"); errb != "" {
 		t.Errorf("a DAG must be silent: %q", errb)
 	}
 }

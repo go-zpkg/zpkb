@@ -25,7 +25,7 @@ import (
 func testFactory(t *testing.T, out *bytes.Buffer, recipeDir string) *factory {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("ZPKG_PANTRY_DIR", dir)
+	t.Setenv("ZPKG_RECIPE_DIR", dir)
 	t.Setenv("ZPKG_DIR", filepath.Join(dir, "pkgx"))
 	installTestBuild(t, filepath.Join(dir, "pkgx"), "proj.org", "1.2.3")
 	return &factory{

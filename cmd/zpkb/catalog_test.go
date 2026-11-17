@@ -57,7 +57,7 @@ func TestCatalogIsTheUnionOfPantryAndOverlay(t *testing.T) {
 		map[string]string{"zlib.net": catRecipe, "gnu.org/bash": catRecipe},
 		map[string]string{"gnu.org/bash": catRecipe, "curl.se/ca-certs": catRecipe})
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--overlay", o}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--overlay", o}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	cat, err := artifact.UnmarshalCatalog(out.Bytes())
@@ -117,7 +117,7 @@ func TestCatalogNamesAProjectOnlyAPlatformLaneBuilds(t *testing.T) {
 	t.Cleanup(func() { versionsFor, publishedTagFor = prevV, prevP })
 
 	var out, errb bytes.Buffer
-	args := []string{"--pantry", p, "--platform", "wasip1/wasm", "--versions", "--recipes", flat}
+	args := []string{"--recipe-dir", p, "--platform", "wasip1/wasm", "--versions", "--recipes", flat}
 	if code := runCatalog(args, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
@@ -153,7 +153,7 @@ func TestCatalogNamesAProjectOnlyAPlatformLaneBuilds(t *testing.T) {
 func TestCatalogRefusesAnUnreadableRecipesTree(t *testing.T) {
 	p, _, _ := catbed(t, map[string]string{"a.org": catRecipe}, nil)
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--recipes", filepath.Join(t.TempDir(), "nope")}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--recipes", filepath.Join(t.TempDir(), "nope")}, &out, &errb); code != 1 {
 		t.Fatalf("code=%d, want 1", code)
 	}
 }
@@ -169,7 +169,7 @@ func TestCatalogRefusesToBuildNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", empty}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", empty}, &out, &errb); code != 1 {
 		t.Fatalf("an empty pantry exited %d, want 1", code)
 	}
 	if !strings.Contains(errb.String(), "not a result") {
@@ -180,7 +180,7 @@ func TestCatalogRefusesToBuildNothing(t *testing.T) {
 	// made, and for a while both said "an empty catalogue is not a result".
 	errb.Reset()
 	missing := filepath.Join(t.TempDir(), "nope")
-	if code := runCatalog([]string{"--pantry", missing}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", missing}, &out, &errb); code != 1 {
 		t.Errorf("an absent pantry exited %d", code)
 	}
 	if strings.Contains(errb.String(), "not a result") {
@@ -200,7 +200,7 @@ func TestCatalogIgnoresWhatIsNotARecipe(t *testing.T) {
 		}
 	}
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	cat, _ := artifact.UnmarshalCatalog(out.Bytes())
@@ -225,7 +225,7 @@ func TestCatalogRefusesABadPlatformAndBadFlags(t *testing.T) {
 func TestCatalogWritesAFile(t *testing.T) {
 	p, _, files := catbed(t, map[string]string{"zlib.net": catRecipe}, nil)
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "-o", "/tmp/c.json"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "-o", "/tmp/c.json"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	if _, ok := (*files)["/tmp/c.json"]; !ok {
@@ -241,7 +241,7 @@ func TestCatalogWritesAFile(t *testing.T) {
 	prev := osWriteFile
 	osWriteFile = func(string, []byte, os.FileMode) error { return os.ErrPermission }
 	t.Cleanup(func() { osWriteFile = prev })
-	if code := runCatalog([]string{"--pantry", p, "-o", "/tmp/c.json"}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", p, "-o", "/tmp/c.json"}, &out, &errb); code != 1 {
 		t.Errorf("an unwritable file exited %d, want 1", code)
 	}
 }
@@ -253,7 +253,7 @@ func TestCatalogReportsAMarshalFailure(t *testing.T) {
 	marshalCatalog = func(artifact.Catalog) ([]byte, error) { return nil, errors.New("nope") }
 	t.Cleanup(func() { marshalCatalog = prev })
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", p}, &out, &errb); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
 	if !strings.Contains(errb.String(), "nope") {
@@ -283,7 +283,7 @@ func TestCatalogPublishes(t *testing.T) {
 	t.Cleanup(func() { ociPush, signingKey, catalogTarball = prevP, prevK, prevT })
 
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--platform", "linux/s390x", "--publish"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--platform", "linux/s390x", "--publish"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	if gotOS != "linux" || gotArch != "s390x" {
@@ -321,7 +321,7 @@ func TestCatalogPublishes(t *testing.T) {
 	// of what a client will do, not as advice about style.
 	errb.Reset()
 	signingKey = func(string) (*sign.Keypair, error) { return nil, nil }
-	if code := runCatalog([]string{"--pantry", p, "--publish"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--publish"}, &out, &errb); code != 0 {
 		t.Fatalf("an unsigned publish exited %d: %s", code, errb.String())
 	}
 	for _, r := range gotRefs {
@@ -336,13 +336,13 @@ func TestCatalogPublishes(t *testing.T) {
 	// Every way it can fail, because a publish that reports success on a
 	// registry that refused it is how an empty catalogue gets believed.
 	signingKey = func(string) (*sign.Keypair, error) { return nil, errors.New("not a key") }
-	if code := runCatalog([]string{"--pantry", p, "--publish"}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--publish"}, &out, &errb); code != 1 {
 		t.Errorf("an unreadable key exited %d", code)
 	}
 	signingKey = func(string) (*sign.Keypair, error) { return nil, nil }
 
 	catalogTarball = func(artifact.Catalog) ([]byte, error) { return nil, errors.New("cannot pack") }
-	if code := runCatalog([]string{"--pantry", p, "--publish"}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--publish"}, &out, &errb); code != 1 {
 		t.Errorf("an unpackable catalogue exited %d", code)
 	}
 	catalogTarball = prevT
@@ -351,7 +351,7 @@ func TestCatalogPublishes(t *testing.T) {
 	// decoration, they are what the thing is published WITH.
 	prevSbom := sbomJSON
 	sbomJSON = func(sbom.Document) ([]byte, error) { return nil, errors.New("no sbom") }
-	if code := runCatalog([]string{"--pantry", p, "--publish"}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--publish"}, &out, &errb); code != 1 {
 		t.Errorf("an unbuildable referrer exited %d", code)
 	}
 	sbomJSON = prevSbom
@@ -359,7 +359,7 @@ func TestCatalogPublishes(t *testing.T) {
 	ociPush = func(string, string, string, string, string, []byte, string, []artifact.Referrer, map[string]string) (ocispec.Descriptor, error) {
 		return ocispec.Descriptor{}, errors.New("registry down")
 	}
-	if code := runCatalog([]string{"--pantry", p, "--publish"}, &out, &errb); code != 1 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--publish"}, &out, &errb); code != 1 {
 		t.Errorf("a failed push exited %d", code)
 	}
 }
@@ -385,7 +385,7 @@ func TestCatalogVersionsIsOptInAndSurvivesOneFailure(t *testing.T) {
 	t.Cleanup(func() { versionsFor, publishedTagFor = prevV, prevP })
 
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--versions"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--versions"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "asking the registry about 2 project(s)") {
@@ -412,7 +412,7 @@ func TestCatalogVersionsIsOptInAndSurvivesOneFailure(t *testing.T) {
 		return nil, false, nil
 	}
 	out.Reset()
-	if code := runCatalog([]string{"--pantry", p}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
 }
@@ -425,7 +425,7 @@ func TestCatalogVersionsSkipsAnEmptyAnswer(t *testing.T) {
 	versionsFor = func(string, string, string) ([]artifact.Ver, bool, error) { return nil, true, nil }
 	t.Cleanup(func() { versionsFor = prev })
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--versions"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--versions"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	cat, _ := artifact.UnmarshalCatalog(out.Bytes())
@@ -475,7 +475,7 @@ func TestCatalogRecordsOnlyWhatThisRegistryHasForThisPlatform(t *testing.T) {
 	t.Cleanup(func() { versionsFor, publishedTagFor = prevV, prevP })
 
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--versions"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--versions"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	cat, err := artifact.UnmarshalCatalog(out.Bytes())
@@ -580,7 +580,7 @@ func TestNewestHereUsesVersionOrderNotStringOrder(t *testing.T) {
 // TestCatalogDispatch covers the main-loop route.
 func TestCatalogDispatch(t *testing.T) {
 	p, _, _ := catbed(t, map[string]string{"zlib.net": catRecipe}, nil)
-	code, out, errs := run2(t, "catalog", "--pantry", p)
+	code, out, errs := run2(t, "catalog", "--recipe-dir", p)
 	if code != 0 {
 		t.Fatalf("code=%d %s", code, errs)
 	}
@@ -608,7 +608,7 @@ func TestCatalogSurvivesOneUnreadableDirectory(t *testing.T) {
 	}
 
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p}, &out, &errb); code != 0 {
 		t.Fatalf("one unreadable directory failed the whole catalogue: %d %s", code, errb.String())
 	}
 	cat, err := artifact.UnmarshalCatalog(out.Bytes())
@@ -628,7 +628,7 @@ func TestCatalogCarriesRuntimeDependencies(t *testing.T) {
 		"lib.org": catRecipe,
 	}, nil)
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--platform", "linux/x86-64"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--platform", "linux/x86-64"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	cat, err := artifact.UnmarshalCatalog(out.Bytes())
@@ -648,7 +648,7 @@ func TestCatalogCarriesRuntimeDependencies(t *testing.T) {
 	}
 	// And the other platform's dependency is NOT there.
 	out.Reset()
-	if code := runCatalog([]string{"--pantry", p, "--platform", "darwin/aarch64"}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--platform", "darwin/aarch64"}, &out, &errb); code != 0 {
 		t.Fatalf("darwin: code=%d", code)
 	}
 	dcat, _ := artifact.UnmarshalCatalog(out.Bytes())
@@ -672,7 +672,7 @@ func TestCatalogCountsProjectsItCannotRead(t *testing.T) {
 	t.Cleanup(func() { recipeLoader = prev })
 
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
 	if !strings.Contains(errb.String(), "1 project(s) named but unreadable") {
@@ -697,7 +697,7 @@ func TestCatalogRefusesUnparseableOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p, "--overrides", ov}, &out, &errb); code != 2 {
+	if code := runCatalog([]string{"--recipe-dir", p, "--overrides", ov}, &out, &errb); code != 2 {
 		t.Fatalf("code=%d, want 2 (stderr=%q)", code, errb.String())
 	}
 }

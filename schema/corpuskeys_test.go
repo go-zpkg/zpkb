@@ -17,7 +17,7 @@ import (
 
 // CorpusEnv names a pantry to survey: a directory holding projects/<slug>/
 // package.yml or package.hcl.
-const CorpusEnv = "ZPKB_PANTRY_CORPUS"
+const CorpusEnv = "ZPKB_RECIPES_CORPUS"
 
 // ⛔⛔ "0 REJECTIONS OVER 1890 RECIPES" MEASURED NOTHING WHILE THE SCHEMA WAS
 // OPEN. package.schema.json sets `"additionalProperties": true` at the root

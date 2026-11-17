@@ -51,7 +51,7 @@ import (
 func runDepsplit(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("depsplit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	pantryDir := fs.String("pantry", envOr("PANTRY", "pantry"), "pantry checkout to read recipes from")
+	pantryDir := fs.String("recipe-dir", envOr("RECIPE_DIR", "recipes"), "pantry checkout to read recipes from")
 	overridesDir := fs.String("overrides", "overrides", `recipe overrides to apply first ("" to skip)`)
 	platform := fs.String("platform", envOr("PLATFORM", "linux/x86-64"), "target os/arch")
 	failOn := fs.Bool("fail", false, "exit 1 if anything is found")

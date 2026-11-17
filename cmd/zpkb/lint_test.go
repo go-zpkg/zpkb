@@ -894,7 +894,7 @@ func TestLintIsSilentAboutBuilderVariablesWithoutTheFlag(t *testing.T) {
 	}
 }
 
-// ⛔⛔ THE FALSE REFUSAL THIS CHECK COULD EASILY HAVE SHIPPED. ZPKG_PANTRY and
+// ⛔⛔ THE FALSE REFUSAL THIS CHECK COULD EASILY HAVE SHIPPED. ZPKG_RECIPES and
 // its neighbours are PASS-THROUGH: SanitizedEnv forwards them only when the
 // caller's environment has them, so they are absent from its RESULT in any
 // process that did not export them — this test process included. A check built
@@ -904,12 +904,12 @@ func TestLintIsSilentAboutBuilderVariablesWithoutTheFlag(t *testing.T) {
 // t.Setenv is deliberately NOT used: the point is that the names are known
 // WITHOUT being set.
 func TestLintAcceptsAPassThroughVariableThatIsNotSetHere(t *testing.T) {
-	if _, ok := os.LookupEnv("ZPKG_PANTRY"); ok {
-		t.Skip("ZPKG_PANTRY is set in this environment, which is the case this test is not about")
+	if _, ok := os.LookupEnv("ZPKG_RECIPES"); ok {
+		t.Skip("ZPKG_RECIPES is set in this environment, which is the case this test is not about")
 	}
 	dir := lintTree(t, map[string]string{
 		"a.org/package.hcl": `build {
-  script = ["echo $ZPKG_PANTRY $ZPKG_DIR"]
+  script = ["echo $ZPKG_RECIPES $ZPKG_DIR"]
 }
 `,
 	})

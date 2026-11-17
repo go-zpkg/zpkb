@@ -28,7 +28,7 @@ import (
 func testTestbed(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("ZPKG_PANTRY_DIR", dir)
+	t.Setenv("ZPKG_RECIPE_DIR", dir)
 	t.Setenv("ZPKG_DIR", filepath.Join(dir, "pkgx"))
 	installTestBuild(t, filepath.Join(dir, "pkgx"), "proj.org", "1.2.3")
 	return dir
@@ -853,7 +853,7 @@ func TestRunTestSurvivesShimsItCannotMake(t *testing.T) {
 func TestRunTestNamesTheBuildItRunsAgainst(t *testing.T) {
 	t.Run("nothing installed is NOT-RUN, and says so", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("ZPKG_PANTRY_DIR", dir)
+		t.Setenv("ZPKG_RECIPE_DIR", dir)
 		t.Setenv("ZPKG_DIR", filepath.Join(dir, "pkgx"))
 		stubRun(t, nil)
 
@@ -873,7 +873,7 @@ func TestRunTestNamesTheBuildItRunsAgainst(t *testing.T) {
 
 	t.Run("one installed renders its hashed prefix", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("ZPKG_PANTRY_DIR", dir)
+		t.Setenv("ZPKG_RECIPE_DIR", dir)
 		t.Setenv("ZPKG_DIR", filepath.Join(dir, "pkgx"))
 		hash := installTestBuild(t, filepath.Join(dir, "pkgx"), "proj.org", "1.2.3")
 		got := stubRun(t, nil)
@@ -897,7 +897,7 @@ func TestRunTestNamesTheBuildItRunsAgainst(t *testing.T) {
 
 	t.Run("two installed is AMBIGUOUS, not the newest", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("ZPKG_PANTRY_DIR", dir)
+		t.Setenv("ZPKG_RECIPE_DIR", dir)
 		t.Setenv("ZPKG_DIR", filepath.Join(dir, "pkgx"))
 		store := filepath.Join(dir, "pkgx")
 		v := artifact.Ver{Raw: "1.2.3"}

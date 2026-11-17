@@ -102,10 +102,15 @@ func dataHomeFor(goos, home string) string {
 
 // Compute lays out the build directories for project@version built for tgt.
 //
-// When ZPKG_PANTRY_DIR (or the older ZPKG_PANTRY_PATH) is set, the workspace is
-// rooted under that checkout (homes/srcs/builds/testbeds), matching brewkit's
-// in-pantry layout; otherwise it lives under the XDG data home, keyed on the
-// target platform+arch.
+// When ZPKG_RECIPE_DIR is set, the workspace is rooted under that checkout
+// (homes/srcs/builds/testbeds), matching brewkit's in-tree layout; otherwise it
+// lives under the XDG data home, keyed on the target platform+arch.
+//
+// ⛔ THERE IS NO SECOND SPELLING ANY MORE. This used to read ZPKG_PANTRY_DIR
+// "or the older ZPKG_PANTRY_PATH", and two spellings of one thing is the state
+// target.go argues against: every document has to explain both forever, and a
+// caller setting the one that lost is silently ignored. Both retired together
+// with the rest of the `pantry` vocabulary; `retiredEnv` refuses either by name.
 // ⛔⛔ `hash` IS THE BUILD'S IDENTITY AND IT GOES IN THE INSTALL PREFIX. The
 // prefix is baked into every binary the build produces — an `@rpath`-relative
 // reference like `@rpath/zlib.net/v1.3.2/lib/libz.1.dylib`, read out of a
@@ -130,7 +135,7 @@ func Compute(project, version, hash string, tgt target.Target) Paths {
 		BuildInstall: install + "+builddir",
 	}
 
-	if checkout := pantryCheckout(); checkout != "" {
+	if checkout := recipeCheckout(); checkout != "" {
 		p.Root = checkout
 		slug := strings.ReplaceAll(project, "/", "__")
 		spec := slug + "-" + version
@@ -153,9 +158,6 @@ func Compute(project, version, hash string, tgt target.Target) Paths {
 	return p
 }
 
-func pantryCheckout() string {
-	if d := os.Getenv("ZPKG_PANTRY_DIR"); d != "" {
-		return d
-	}
-	return os.Getenv("ZPKG_PANTRY_PATH")
+func recipeCheckout() string {
+	return os.Getenv("ZPKG_RECIPE_DIR")
 }

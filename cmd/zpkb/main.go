@@ -191,6 +191,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printVersion(stdout)
 		return 0
 	}
+	// ⛔⛔ BEFORE ANY SUBCOMMAND, because the failure it catches is SILENT and
+	// every subcommand has it. The `pantry` environment variables were renamed
+	// with the repository (go-zpkg/pantry-overlay is go-zpkg/recipes now); a
+	// caller still exporting one does not fail, it builds WITHOUT what the
+	// variable named — no overlay, no recipe checkout — and says nothing.
+	//
+	// Placed after --version on purpose: asking a binary which build it is must
+	// work in any environment, including a broken one.
+	if err := config.CheckRetiredEnv(nil); err != nil {
+		fmt.Fprintf(stderr, "zpkb: %v\n", err)
+		return 2
+	}
 	if *platform != "" {
 		os.Setenv("ZPKB_TARGET", *platform)
 	}

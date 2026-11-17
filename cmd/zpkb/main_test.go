@@ -19,6 +19,40 @@ func run2(t *testing.T, args ...string) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
+// ⛔⛔ EVERY SUBCOMMAND REFUSES A RETIRED ENVIRONMENT VARIABLE, before it does
+// anything. The `pantry` names were renamed with the repository
+// (go-zpkg/pantry-overlay is go-zpkg/recipes now), and a caller still exporting
+// one does NOT fail on its own: the shell expands an unset variable to the
+// empty string, so the build runs without the overlay the variable named and
+// says nothing. Four recipes shipped that way across three sweeps
+// (go-zpkg/zpkb#494); this is the same lesson on the caller's side.
+func TestRunRefusesARetiredEnvironmentVariable(t *testing.T) {
+	t.Setenv("ZPKG_PANTRY_OVERLAY", "https://example.invalid/projects")
+	code, _, errs := run2(t, "target")
+	if code != 2 {
+		t.Fatalf("a retired variable must stop the command: code=%d err=%q", code, errs)
+	}
+	for _, want := range []string{"ZPKG_PANTRY_OVERLAY", "ZPKG_RECIPES_OVERLAY", "SILENT"} {
+		if !strings.Contains(errs, want) {
+			t.Errorf("the refusal does not say %q: %q", want, errs)
+		}
+	}
+}
+
+// ⭐ AND --version STILL WORKS IN A POISONED ENVIRONMENT, which is deliberate
+// and is why the check sits after that flag. "Which build of zpkb is this?"
+// must be answerable on exactly the broken machine where someone is asking.
+func TestVersionAnswersEvenWithARetiredVariableSet(t *testing.T) {
+	t.Setenv("ZPKG_PANTRY_DIR", "/somewhere")
+	code, out, errs := run2(t, "--version")
+	if code != 0 {
+		t.Fatalf("--version must answer anyway: code=%d err=%q", code, errs)
+	}
+	if out == "" {
+		t.Error("--version printed nothing")
+	}
+}
+
 func TestTargetCommand(t *testing.T) {
 	code, out, _ := run2(t, "target")
 	if code != 0 || !strings.Contains(out, "triple=") {

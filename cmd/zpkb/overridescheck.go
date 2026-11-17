@@ -33,7 +33,7 @@ func runOverrides(args []string, stdout, stderr io.Writer) int {
 	fset := flag.NewFlagSet("overrides", flag.ContinueOnError)
 	fset.SetOutput(stderr)
 	dir := fset.String("dir", "overrides", "directory of recipe overrides: *.patch applied to the tree, *.hcl applied as each recipe is read")
-	pantryDir := fset.String("pantry", envOr("PANTRY", "pantry"), "pantry checkout to patch — a FRESH one, since a patch already applied does not apply twice")
+	pantryDir := fset.String("recipe-dir", envOr("RECIPE_DIR", "recipes"), "pantry checkout to patch — a FRESH one, since a patch already applied does not apply twice")
 	if err := fset.Parse(args); err != nil {
 		return 2
 	}

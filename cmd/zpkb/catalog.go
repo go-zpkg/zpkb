@@ -54,8 +54,8 @@ import (
 func runCatalog(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("catalog", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	pantryDir := fs.String("pantry", envOr("PANTRY", "pantry"), "pantry checkout dir")
-	overlayDir := fs.String("overlay", envOr("PANTRY_OVERLAY_DIR", ""), "an overlay checkout read beside the pantry")
+	pantryDir := fs.String("recipe-dir", envOr("RECIPE_DIR", "recipes"), "recipe checkout dir")
+	overlayDir := fs.String("overlay", envOr("RECIPE_OVERLAY_DIR", ""), "an overlay checkout read beside the pantry")
 	platform := fs.String("platform", envOr("PLATFORM", "linux/x86-64"), "the platform this catalogue is FOR")
 	out := fs.String("o", "", "write the JSON here instead of stdout")
 	overridesDir := fs.String("overrides", envOr("OVERRIDES", ""), "directory of *.hcl logical recipe overrides, applied as the factory applies them")

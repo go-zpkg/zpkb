@@ -19,7 +19,7 @@ func writeOrder(t *testing.T, lines ...string) string {
 
 func runOrder(t *testing.T, pan, overrides, path string, roots ...string) (int, string, string) {
 	t.Helper()
-	args := []string{"--pantry", pan, "--platform", "linux/x86-64", "--build", "--check-order", path}
+	args := []string{"--recipe-dir", pan, "--platform", "linux/x86-64", "--build", "--check-order", path}
 	if overrides != "" {
 		args = append(args, "--overrides", overrides)
 	}

@@ -69,7 +69,7 @@ func TestCatalogSaysHowMuchItKnows(t *testing.T) {
 		"a.org": described, "b.org": catRecipe, "c.org": catRecipe,
 	}, nil)
 	var out, errb bytes.Buffer
-	if code := runCatalog([]string{"--pantry", p}, &out, &errb); code != 0 {
+	if code := runCatalog([]string{"--recipe-dir", p}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "1 of 3 project(s) name their commands, 1 describe themselves") {

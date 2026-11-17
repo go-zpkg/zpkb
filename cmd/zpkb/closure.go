@@ -25,9 +25,9 @@ import (
 func runClosure(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("closure", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	pantryDir := fs.String("pantry", envOr("PANTRY", "pantry"), "pantry checkout dir")
+	pantryDir := fs.String("recipe-dir", envOr("RECIPE_DIR", "recipes"), "recipe checkout dir")
 	overridesDir := fs.String("overrides", envOr("OVERRIDES", ""), "directory of *.hcl logical recipe overrides, applied to the pantry's recipes as they are read")
-	overlayDir := fs.String("overlay", envOr("PANTRY_OVERLAY_DIR", ""), "an overlay checkout consulted BEFORE the pantry, as the factory consults ZPKG_PANTRY_OVERLAY. Without it this describes a build nobody performs")
+	overlayDir := fs.String("overlay", envOr("RECIPE_OVERLAY_DIR", ""), "an overlay checkout consulted BEFORE the pantry, as the factory consults ZPKG_RECIPES_OVERLAY. Without it this describes a build nobody performs")
 	platform := fs.String("platform", envOr("PLATFORM", "linux/x86-64"), "target os/arch")
 	withBuild := fs.Bool("build", false, "follow BUILD dependencies as well as runtime ones. The runtime closure is a DAG and is what a consumer needs; adding build dependencies makes it a graph with cycles, and is what FILLING an architecture from nothing actually requires")
 	pins := fs.Bool("pins", false, "instead of the order, emit the `project@constraint` words a `bk factory --recipes` dispatch needs, one per line, so the version a REQUESTED project builds is the one its dependents can use. A project whose dependents cannot agree is reported as a comment rather than decided")

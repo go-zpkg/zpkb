@@ -52,8 +52,8 @@ import (
 func runLock(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("lock", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	pantryDir := fs.String("pantry", envOr("PANTRY", "pantry"), "pantry checkout dir")
-	overlayDir := fs.String("overlay", envOr("PANTRY_OVERLAY_DIR", ""), "an overlay checkout consulted as the factory consults it")
+	pantryDir := fs.String("recipe-dir", envOr("RECIPE_DIR", "recipes"), "recipe checkout dir")
+	overlayDir := fs.String("overlay", envOr("RECIPE_OVERLAY_DIR", ""), "an overlay checkout consulted as the factory consults it")
 	overridesDir := fs.String("overrides", envOr("OVERRIDES", ""), "directory of *.hcl logical recipe overrides")
 	platform := fs.String("platform", envOr("PLATFORM", "linux/x86-64"), "target os/arch")
 	out := fs.String("o", "", "write here instead of stdout")

@@ -33,8 +33,8 @@ var origLogf = logf
 func tenv(t *testing.T) {
 	t.Setenv("ZPKG_DIR", filepath.Join(t.TempDir(), "pkgx"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
-	t.Setenv("ZPKG_PANTRY_DIR", "")
-	t.Setenv("ZPKG_PANTRY_PATH", "")
+	t.Setenv("ZPKG_RECIPE_DIR", "")
+	t.Setenv("ZPKG_RECIPES_PATH", "")
 }
 
 func okRecipe() *pantry.Recipe {

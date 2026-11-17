@@ -192,7 +192,7 @@ func TestCheckSeesARecipeEditedUnderAPin(t *testing.T) {
 
 	// lockbed stubs osWriteFile into a map, so write through the same seam.
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-o", lockPath, "lib.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-o", lockPath, "lib.org"}, &out, &errb); code != 0 {
 		t.Fatalf("writing: code=%d err=%q", code, errb.String())
 	}
 	body := (*files)[lockPath]
@@ -205,7 +205,7 @@ func TestCheckSeesARecipeEditedUnderAPin(t *testing.T) {
 
 	out.Reset()
 	errb.Reset()
-	if code := runLock([]string{"--pantry", p, "--check", lockPath}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--check", lockPath}, &out, &errb); code != 0 {
 		t.Fatalf("an unchanged pantry reported drift: code=%d\n%s%s", code, out.String(), errb.String())
 	}
 	if !strings.Contains(out.String(), "none moved") {
@@ -219,7 +219,7 @@ func TestCheckSeesARecipeEditedUnderAPin(t *testing.T) {
 	}
 	out.Reset()
 	errb.Reset()
-	if code := runLock([]string{"--pantry", p, "--check", lockPath}, &out, &errb); code != 1 {
+	if code := runLock([]string{"--recipe-dir", p, "--check", lockPath}, &out, &errb); code != 1 {
 		t.Fatalf("a recipe edited under a pin was not reported: code=%d\n%s", code, out.String())
 	}
 	if !strings.Contains(out.String(), "same version, so something it is built FROM changed") {
@@ -290,7 +290,7 @@ func TestCheckSaysARevisionMovedWithoutCallingItDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	code := runLock([]string{"--pantry", p, "--check", lock}, &out, &errb)
+	code := runLock([]string{"--recipe-dir", p, "--check", lock}, &out, &errb)
 	if !strings.Contains(out.String(), "pantry revision differs: a-revision-from-somewhere-else →") {
 		t.Errorf("the moved revision is not reported:\n%s", out.String())
 	}
@@ -305,7 +305,7 @@ func TestCheckSaysARevisionMovedWithoutCallingItDrift(t *testing.T) {
 func lockedSpecOf(t *testing.T, pantryDir, proj string) string {
 	t.Helper()
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", pantryDir, "--platform", "linux/x86-64", proj}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", pantryDir, "--platform", "linux/x86-64", proj}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d %s", code, errb.String())
 	}
 	_, s, _ := strings.Cut(out.String(), `spec = "`)
@@ -325,7 +325,7 @@ func TestCheckRefusesAnEmptyClosure(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", t.TempDir(), "--check", lock}, &out, &errb); code != 2 {
+	if code := runLock([]string{"--recipe-dir", t.TempDir(), "--check", lock}, &out, &errb); code != 2 {
 		t.Fatalf("code=%d; want 2\n%s%s", code, out.String(), errb.String())
 	}
 	if strings.Contains(out.String(), "none moved") {
@@ -353,7 +353,7 @@ func TestCheckRefusesUnparseableOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--overrides", ov, "--check", lock}, &out, &errb); code != 2 {
+	if code := runLock([]string{"--recipe-dir", p, "--overrides", ov, "--check", lock}, &out, &errb); code != 2 {
 		t.Fatalf("code=%d; want 2 (stderr=%q)", code, errb.String())
 	}
 }
@@ -380,7 +380,7 @@ func TestCheckKeepsUnresolvedApartFromDrift(t *testing.T) {
 	t.Cleanup(func() { recipeLoader = prev })
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--check", lock}, &out, &errb); code != 1 {
+	if code := runLock([]string{"--recipe-dir", p, "--check", lock}, &out, &errb); code != 1 {
 		t.Fatalf("code=%d; want 1\n%s%s", code, out.String(), errb.String())
 	}
 	if !strings.Contains(errb.String(), "unresolved: lib.org") {
@@ -402,7 +402,7 @@ func TestLockCheckAppliesTheRootsConstraintFromTheFile(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "pinned.hcl")
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-o", lockPath, "app.org@1.2.3"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-o", lockPath, "app.org@1.2.3"}, &out, &errb); code != 0 {
 		t.Fatalf("writing: code=%d err=%q", code, errb.String())
 	}
 	body := (*files)[lockPath]
@@ -415,7 +415,7 @@ func TestLockCheckAppliesTheRootsConstraintFromTheFile(t *testing.T) {
 
 	out.Reset()
 	errb.Reset()
-	if code := runLock([]string{"--pantry", p, "--check", lockPath}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--check", lockPath}, &out, &errb); code != 0 {
 		t.Fatalf("a constrained lock was reported as drifted: code=%d\n%s%s", code, out.String(), errb.String())
 	}
 	if !strings.Contains(out.String(), "none moved") {
