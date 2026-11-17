@@ -158,14 +158,14 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	recipes := fs.String("recipes", envOr("RECIPES", ""), `space-separated projects to build (default: --recipes-file). A word may carry its own version constraint after "@" — "cmake.org@=4.4.2" pins that project alone, which is what closing one index gap needs; --versions applies to every requested project at once`)
 	recipesFile := fs.String("recipes-file", "recipes.txt", "file listing one project per line (# comments allowed)")
 	noClosure := fs.Bool("no-closure", envBool("NO_CLOSURE"), "build ONLY the requested projects, not their dependency closure. For a repair run, where the dependencies are already published and rebuilding them at their newest upstream version starves the targets behind them")
-	pantryDir := fs.String("pantry", envOr("PANTRY", "pantry"), "pantry checkout to build from")
+	pantryDir := fs.String("recipe-dir", envOr("RECIPE_DIR", "recipes"), "pantry checkout to build from")
 	// The factory BUILDS from the pantry alone — this does not change that.
 	// It widens the CLOSURE: a dependency only our overlay declares is one a
 	// consumer will demand of the registry, so it has to be built, and until
 	// now nothing in the factory could see it. `bk closure` has had the flag
 	// since the walk it uses was taught about the overlay; the walk the
 	// factory runs was left behind.
-	overlayDir := fs.String("overlay", envOr("PANTRY_OVERLAY_DIR", ""), "an overlay checkout whose dependencies COUNT toward the closure, as a consumer resolves them. The recipe built is still the pantry's")
+	overlayDir := fs.String("overlay", envOr("RECIPE_OVERLAY_DIR", ""), "an overlay checkout whose dependencies COUNT toward the closure, as a consumer resolves them. The recipe built is still the pantry's")
 	overridesDir := fs.String("overrides", "overrides", `directory of *.patch recipe overrides ("" to skip)`)
 	to := fs.String("to", envOr("DIST", "oci://ghcr.io/go-zpkg/packages"), "oci:// registry to publish to")
 	platform := fs.String("platform", envOr("PLATFORM", ""), "target os/arch, e.g. linux/x86-64 (required)")

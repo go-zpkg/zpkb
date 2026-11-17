@@ -83,7 +83,7 @@ func TestRunToolsOnARecipe(t *testing.T) {
 	writeClosureRecipe(t, p, "certs.org",
 		"build:\n  script: |\n    V=$(echo 1.2.3 | tr -- . -)\n    curl -k \"https://x/$V.pem\"\n")
 	var out, errb bytes.Buffer
-	if code := runTools([]string{"--pantry", p, "--platform", "linux/x86-64", "certs.org"}, &out, &errb); code != 0 {
+	if code := runTools([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "certs.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	got := out.String()
@@ -98,7 +98,7 @@ func TestRunToolsOnARecipe(t *testing.T) {
 // report: "0 commands" would read as an answer.
 func TestRunToolsNeedsSomethingToLookAt(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := runTools([]string{"--pantry", t.TempDir()}, &out, &errb); code != 2 {
+	if code := runTools([]string{"--recipe-dir", t.TempDir()}, &out, &errb); code != 2 {
 		t.Errorf("code = %d, want 2", code)
 	}
 	if !strings.Contains(errb.String(), "--all") {
@@ -113,7 +113,7 @@ func TestRunToolsAllFindsAnHCLRecipe(t *testing.T) {
 	writeClosureRecipe(t, p, "yml.org", "build:\n  script: make install\n")
 	writeClosureRecipeNamed(t, p, "hcl.org", "package.hcl", "build { script = [\"ninja install\"] }\n")
 	var out, errb bytes.Buffer
-	if code := runTools([]string{"--pantry", p, "--platform", "linux/x86-64", "--all"}, &out, &errb); code != 0 {
+	if code := runTools([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--all"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	got := out.String()
@@ -133,7 +133,7 @@ func TestRunToolsByProject(t *testing.T) {
 	writeClosureRecipe(t, p, "one.org", "build:\n  script: |\n    sed -i s/a/b/ x\n    awk '{print}' y\n")
 	writeClosureRecipe(t, p, "two.org", "build:\n  script: |\n    sed -i s/c/d/ z\n")
 	var out, errb bytes.Buffer
-	if code := runTools([]string{"--pantry", p, "--platform", "linux/x86-64", "--by-project",
+	if code := runTools([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--by-project",
 		"one.org", "two.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
@@ -155,7 +155,7 @@ func TestRunToolsCountsAProjectOnce(t *testing.T) {
 	p := t.TempDir()
 	writeClosureRecipe(t, p, "one.org", "build:\n  script: sed -i s/a/b/ x\n")
 	var out, errb bytes.Buffer
-	runTools([]string{"--pantry", p, "--platform", "linux/x86-64", "one.org", "one.org"}, &out, &errb)
+	runTools([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "one.org", "one.org"}, &out, &errb)
 	if !strings.Contains(out.String(), "1 command(s) across 1 project(s)") {
 		t.Errorf("a project named twice is one project:\n%s", out.String())
 	}
@@ -167,7 +167,7 @@ func TestRunToolsSkipsAMissingRecipe(t *testing.T) {
 	p := t.TempDir()
 	writeClosureRecipe(t, p, "here.org", "build:\n  script: sed -i s/a/b/ x\n")
 	var out, errb bytes.Buffer
-	if code := runTools([]string{"--pantry", p, "--platform", "linux/x86-64", "here.org", "gone.org"}, &out, &errb); code != 0 {
+	if code := runTools([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "here.org", "gone.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d", code)
 	}
 	if !strings.Contains(errb.String(), "skip gone.org") {
@@ -223,7 +223,7 @@ func TestRunToolsScopeSeparatesBuildFromTest(t *testing.T) {
 	} {
 		t.Run(tc.scope, func(t *testing.T) {
 			var out, errb bytes.Buffer
-			code := runTools([]string{"--pantry", p, "--platform", "linux/x86-64", "--scope", tc.scope, "serf.org"}, &out, &errb)
+			code := runTools([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--scope", tc.scope, "serf.org"}, &out, &errb)
 			if code != 0 {
 				t.Fatalf("code = %d: %s", code, errb.String())
 			}
@@ -239,7 +239,7 @@ func TestRunToolsScopeSeparatesBuildFromTest(t *testing.T) {
 	// "all" is the default and must stay it, or every existing caller changes
 	// meaning without being edited.
 	var out, errb bytes.Buffer
-	if code := runTools([]string{"--pantry", p, "--platform", "linux/x86-64", "serf.org"}, &out, &errb); code != 0 {
+	if code := runTools([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "serf.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	for _, want := range []string{"scons", "pkg-config"} {
@@ -254,7 +254,7 @@ func TestRunToolsScopeSeparatesBuildFromTest(t *testing.T) {
 // nobody could tell was wrong.
 func TestRunToolsRefusesAnUnknownScope(t *testing.T) {
 	var out, errb bytes.Buffer
-	if code := runTools([]string{"--pantry", t.TempDir(), "--scope", "tests", "x.org"}, &out, &errb); code != 2 {
+	if code := runTools([]string{"--recipe-dir", t.TempDir(), "--scope", "tests", "x.org"}, &out, &errb); code != 2 {
 		t.Errorf("code = %d, want 2", code)
 	}
 	if !strings.Contains(errb.String(), "unknown --scope") {

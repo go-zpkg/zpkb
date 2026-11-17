@@ -57,7 +57,7 @@ func TestOverridesAppliesCleanly(t *testing.T) {
 +    A: 2
 `
 	dir, pantryDir := ovTree(t, ovRecipe, patch)
-	rc, out, errb := ov(t, "--dir", dir, "--pantry", pantryDir)
+	rc, out, errb := ov(t, "--dir", dir, "--recipe-dir", pantryDir)
 	if rc != 0 {
 		t.Fatalf("rc = %d, stderr = %s", rc, errb)
 	}
@@ -80,7 +80,7 @@ func TestOverridesFailsOnAPatchThatStoppedApplying(t *testing.T) {
 +    A: 2
 `
 	dir, pantryDir := ovTree(t, ovRecipe, patch)
-	rc, out, errb := ov(t, "--dir", dir, "--pantry", pantryDir)
+	rc, out, errb := ov(t, "--dir", dir, "--recipe-dir", pantryDir)
 	if rc != 1 {
 		t.Fatalf("rc = %d, want 1 — a patch that stopped applying must fail the lane", rc)
 	}
@@ -102,7 +102,7 @@ func TestOverridesFailsOnAPatchThatStoppedApplying(t *testing.T) {
 // every dead check in this repository's history.
 func TestOverridesRefusesAnEmptyDirectory(t *testing.T) {
 	dir, pantryDir := ovTree(t, ovRecipe, "")
-	rc, _, errb := ov(t, "--dir", dir, "--pantry", pantryDir)
+	rc, _, errb := ov(t, "--dir", dir, "--recipe-dir", pantryDir)
 	if rc != 1 {
 		t.Errorf("rc = %d, want 1", rc)
 	}
@@ -122,7 +122,7 @@ func TestOverridesErrors(t *testing.T) {
 	overridesApply = func(overrides.Options) (overrides.Result, error) {
 		return overrides.Result{}, errors.New("boom")
 	}
-	rc, _, errb := ov(t, "--dir", t.TempDir(), "--pantry", t.TempDir())
+	rc, _, errb := ov(t, "--dir", t.TempDir(), "--recipe-dir", t.TempDir())
 	if rc != 1 || !strings.Contains(errb, "boom") {
 		t.Errorf("rc = %d, stderr = %q", rc, errb)
 	}
@@ -140,7 +140,7 @@ func TestOverridesDispatch(t *testing.T) {
 +    A: 2
 `)
 	var out, errb bytes.Buffer
-	if code := run([]string{"overrides", "--dir", dir, "--pantry", pantryDir}, &out, &errb); code != 0 {
+	if code := run([]string{"overrides", "--dir", dir, "--recipe-dir", pantryDir}, &out, &errb); code != 0 {
 		t.Errorf("code = %d, stderr = %q", code, errb.String())
 	}
 	if !strings.Contains(out.String(), "1 applied") {
@@ -167,7 +167,7 @@ func TestOverridesNeedsNoBuildTarget(t *testing.T) {
 +    A: 2
 `)
 	var out, errb bytes.Buffer
-	if code := run([]string{"overrides", "--dir", dir, "--pantry", pantryDir}, &out, &errb); code != 0 {
+	if code := run([]string{"overrides", "--dir", dir, "--recipe-dir", pantryDir}, &out, &errb); code != 0 {
 		t.Errorf("code = %d, stderr = %q", code, errb.String())
 	}
 	// And the two subcommands that DO need a target still refuse it, because
@@ -204,7 +204,7 @@ project = "acme.org"
 why     = "our registry carries no openssl 1.x"
 edits   = [{ path = "dependencies[\"openssl.org\"]", set = "^3" }]
 `)
-		rc, out, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, out, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 0 {
 			t.Fatalf("rc = %d\n%s\n%s", rc, out, errb)
 		}
@@ -220,7 +220,7 @@ project = "acme.org"
 why     = "our registry carries no openssl 1.x"
 edits   = [{ path = "dependencies[\"openssl.org\"]", set = "^3" }]
 `)
-		rc, out, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, out, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 0 {
 			t.Fatalf("rc = %d\n%s\n%s", rc, out, errb)
 		}
@@ -239,7 +239,7 @@ project = "acme.org"
 why     = "w"
 edits   = [{ path = "build.script", from = "cmake", to = "cmake3" }]
 `)
-		rc, _, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, _, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 1 {
 			t.Fatalf("rc = %d\n%s", rc, errb)
 		}
@@ -255,7 +255,7 @@ project = "absent.example"
 why     = "w"
 edits   = [{ path = "a", set = 1 }]
 `)
-		rc, _, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, _, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 1 || !strings.Contains(errb, "absent.example") {
 			t.Errorf("rc = %d, stderr:\n%s", rc, errb)
 		}
@@ -268,7 +268,7 @@ project = "acme.org"
 why     = "w"
 edits   = [{ path = "distributable", set = 7 }]
 `)
-		rc, _, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, _, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 1 {
 			t.Errorf("a schema failure must stop the run: rc = %d\n%s", rc, errb)
 		}
@@ -309,7 +309,7 @@ project = "acme.org"
 why     = "our registry carries no openssl 1.x"
 edits   = [{ path = "dependencies.openssl.org", set = "^3" }]
 `)
-		rc, out, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, out, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 0 {
 			t.Errorf("a recipe OUR schema declines is not an override failure: rc = %d\n%s", rc, errb)
 		}
@@ -326,7 +326,7 @@ edits   = [{ path = "dependencies.openssl.org", set = "^3" }]
 	t.Run("a file that does not parse", func(t *testing.T) {
 		dir, pantry := ovTree(t, logicalRecipe, "")
 		writeHCL(t, dir, "bad.hcl", "project = ")
-		rc, _, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, _, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 1 || !strings.Contains(errb, "overrides:") {
 			t.Errorf("rc = %d, stderr:\n%s", rc, errb)
 		}
@@ -334,7 +334,7 @@ edits   = [{ path = "dependencies.openssl.org", set = "^3" }]
 
 	t.Run("neither format present", func(t *testing.T) {
 		dir, pantry := ovTree(t, logicalRecipe, "")
-		rc, _, errb := ov(t, "--dir", dir, "--pantry", pantry)
+		rc, _, errb := ov(t, "--dir", dir, "--recipe-dir", pantry)
 		if rc != 1 || !strings.Contains(errb, "nothing in") {
 			t.Errorf("rc = %d, stderr:\n%s", rc, errb)
 		}

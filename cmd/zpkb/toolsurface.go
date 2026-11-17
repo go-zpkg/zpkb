@@ -38,7 +38,7 @@ import (
 func runTools(args []string, stdout, stderr io.Writer) int {
 	fset := flag.NewFlagSet("tools", flag.ContinueOnError)
 	fset.SetOutput(stderr)
-	pantryDir := fset.String("pantry", envOr("PANTRY", "pantry"), "pantry checkout dir")
+	pantryDir := fset.String("recipe-dir", envOr("RECIPE_DIR", "recipes"), "recipe checkout dir")
 	platform := fset.String("platform", envOr("PLATFORM", "linux/x86-64"), "target os/arch")
 	all := fset.Bool("all", false, "every project in the pantry, rather than the ones named")
 	byProject := fset.Bool("by-project", false, "list which projects need each command, not just the count")

@@ -33,7 +33,7 @@ func TestRunClosure(t *testing.T) {
 	writeClosureRecipe(t, p, "lib.org", "versions:\n  github: a/lib/tags\nbuild: make\n")
 
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	lines := strings.Fields(out.String())
@@ -47,7 +47,7 @@ func TestRunClosure(t *testing.T) {
 	// idempotent revisit: depending on app twice must not duplicate.
 	out.Reset()
 	errb.Reset()
-	runClosure([]string{"--pantry", p, "app.org", "app.org"}, &out, &errb)
+	runClosure([]string{"--recipe-dir", p, "app.org", "app.org"}, &out, &errb)
 	if n := len(strings.Fields(out.String())); n != 2 {
 		t.Errorf("cycle/dup guard: got %d lines, want 2", n)
 	}
@@ -63,7 +63,7 @@ func TestRunClosureFlagError(t *testing.T) {
 func TestRunClosureEnvFallback(t *testing.T) {
 	p := t.TempDir()
 	writeClosureRecipe(t, p, "leaf.org", "versions:\n  github: a/leaf/tags\nbuild: make\n")
-	t.Setenv("PANTRY", p)
+	t.Setenv("RECIPE_DIR", p)
 	t.Setenv("PLATFORM", "linux/aarch64")
 	var out, errb bytes.Buffer
 	if code := runClosure([]string{"leaf.org"}, &out, &errb); code != 0 {
@@ -101,7 +101,7 @@ func TestRunClosureRangeConstrainedDep(t *testing.T) {
 	writeClosureRecipe(t, p, "lib.org", "versions:\n  github: a/lib/tags\nbuild: make\n")
 
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/aarch64", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/aarch64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	if lines := strings.Fields(out.String()); len(lines) != 2 || lines[0] != "lib.org" || lines[1] != "app.org" {
@@ -116,7 +116,7 @@ func TestRunClosureRangeConstrainedDep(t *testing.T) {
 func TestClosureDispatch(t *testing.T) {
 	p := t.TempDir()
 	writeClosureRecipe(t, p, "leaf.org", "versions:\n  github: a/leaf/tags\nbuild: make\n")
-	code, out, errs := run2(t, "closure", "--pantry", p, "leaf.org")
+	code, out, errs := run2(t, "closure", "--recipe-dir", p, "leaf.org")
 	if code != 0 {
 		t.Fatalf("dispatch closure code=%d err=%q", code, errs)
 	}
@@ -230,7 +230,7 @@ merge {
 	writeClosureRecipe(t, p, "zlib.net", "build: make\n")
 
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--overrides", ovDir, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--overrides", ovDir, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code, stderr = %s", errb.String())
 	}
 	if !strings.Contains(out.String(), "zlib.net") {
@@ -245,7 +245,7 @@ merge {
 	}
 	out.Reset()
 	errb.Reset()
-	if code := runClosure([]string{"--pantry", p, "--overrides", bad, "app.org"}, &out, &errb); code != 2 {
+	if code := runClosure([]string{"--recipe-dir", p, "--overrides", bad, "app.org"}, &out, &errb); code != 2 {
 		t.Errorf("code = %d, want 2; stderr = %s", code, errb.String())
 	}
 }
@@ -315,7 +315,7 @@ func TestClosureFailsOnARootItCannotRead(t *testing.T) {
 	// A DEPENDENCY with no recipe is still a skip: it resolves from upstream
 	// dist at build time, and this is the premise of the case below.
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", pan, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", pan, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("a missing dependency must not fail the walk: code = %d, %s", code, errb.String())
 	}
 	if !strings.Contains(out.String(), "app.org") {
@@ -323,7 +323,7 @@ func TestClosureFailsOnARootItCannotRead(t *testing.T) {
 	}
 
 	for _, withBuild := range []bool{false, true} {
-		args := []string{"--pantry", pan, "--platform", "linux/x86-64"}
+		args := []string{"--recipe-dir", pan, "--platform", "linux/x86-64"}
 		if withBuild {
 			args = append(args, "--build")
 		}
@@ -412,7 +412,7 @@ func TestRunClosureReadsAPinnedRoot(t *testing.T) {
 	writeClosureRecipe(t, p, "gnu.org/gawk", "versions:\n  github: a/gawk/tags\nbuild: make\n")
 
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "gnu.org/gawk@~5.3"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "gnu.org/gawk@~5.3"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	if got := strings.TrimSpace(out.String()); got != "gnu.org/gawk" {
@@ -442,7 +442,7 @@ func TestRunClosureResolvesASet(t *testing.T) {
 	writeClosureRecipe(t, p, "acme.org/every", "members:\n  app.org: '*'\n")
 
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "acme.org/every"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "acme.org/every"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	// The same order naming app.org directly gives: a set is expanded at the

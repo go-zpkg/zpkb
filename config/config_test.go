@@ -37,8 +37,8 @@ func TestZpkgDir(t *testing.T) {
 }
 
 func TestComputeDefaultLayout(t *testing.T) {
-	t.Setenv("ZPKG_PANTRY_DIR", "")
-	t.Setenv("ZPKG_PANTRY_PATH", "")
+	t.Setenv("ZPKG_RECIPE_DIR", "")
+	t.Setenv("ZPKG_RECIPES_PATH", "")
 	t.Setenv("ZPKG_DIR", "/opt/pkgx")
 	t.Setenv("XDG_DATA_HOME", "/data")
 
@@ -100,7 +100,7 @@ func TestComputeRefusesAPrefixWithNoIdentity(t *testing.T) {
 
 func TestComputePantryCheckoutLayout(t *testing.T) {
 	t.Setenv("ZPKG_DIR", "/opt/pkgx")
-	t.Setenv("ZPKG_PANTRY_DIR", "/co")
+	t.Setenv("ZPKG_RECIPE_DIR", "/co")
 	p := Compute("acme.org/tool", "2.0.0", testHash, target.Host())
 	if p.Home != filepath.FromSlash("/co/homes/acme.org__tool-2.0.0") {
 		t.Errorf("checkout Home = %q", p.Home)
@@ -117,11 +117,24 @@ func TestComputePantryCheckoutLayout(t *testing.T) {
 	if p.TarballDir != filepath.FromSlash("/co/srcs") {
 		t.Errorf("checkout TarballDir = %q", p.TarballDir)
 	}
-	// the older ZPKG_PANTRY_PATH env is honoured too
-	t.Setenv("ZPKG_PANTRY_DIR", "")
+	// ⛔ THE SECOND SPELLING IS GONE. This used to assert that "the older
+	// ZPKG_PANTRY_PATH env is honoured too"; both it and ZPKG_PANTRY_DIR
+	// retired with the rest of the `pantry` vocabulary, and nothing reads a
+	// second name for this any more.
+	//
+	// The assertion is INVERTED rather than deleted: a retired variable that
+	// quietly did nothing is the exact failure CheckRetiredEnv exists to
+	// prevent, so the test says that setting it alone leaves the workspace at
+	// the XDG default — and TestCheckRetiredEnvNamesEveryOne says the binary
+	// refuses it by name before a build gets this far.
+	t.Setenv("ZPKG_RECIPE_DIR", "")
 	t.Setenv("ZPKG_PANTRY_PATH", "/co2")
-	if q := Compute("x", "1", testHash, target.Host()); q.Home != filepath.FromSlash("/co2/homes/x-1") {
-		t.Errorf("ZPKG_PANTRY_PATH Home = %q", q.Home)
+	q := Compute("x", "1", testHash, target.Host())
+	if q.Home == filepath.FromSlash("/co2/homes/x-1") {
+		t.Error("ZPKG_PANTRY_PATH is retired and must not root the workspace")
+	}
+	if q.Root != filepath.Join(dataHome(), buildTreeDir) {
+		t.Errorf("with no recipe checkout the workspace is the XDG default, got Root = %q", q.Root)
 	}
 }
 
@@ -174,11 +187,11 @@ func TestComputeRootCoversEveryBuildDir(t *testing.T) {
 	tgt := target.Target{Platform: "darwin", Arch: "aarch64", Triple: "aarch64-apple-darwin"}
 	for name, setup := range map[string]func(){
 		"cache": func() {
-			t.Setenv("ZPKG_PANTRY_DIR", "")
-			t.Setenv("ZPKG_PANTRY_PATH", "")
+			t.Setenv("ZPKG_RECIPE_DIR", "")
+			t.Setenv("ZPKG_RECIPES_PATH", "")
 			t.Setenv("XDG_DATA_HOME", "/data")
 		},
-		"pantry": func() { t.Setenv("ZPKG_PANTRY_DIR", "/pantry"); t.Setenv("ZPKG_PANTRY_PATH", "") },
+		"pantry": func() { t.Setenv("ZPKG_RECIPE_DIR", "/pantry"); t.Setenv("ZPKG_RECIPES_PATH", "") },
 	} {
 		setup()
 		p := Compute("acme.org/tool", "1.2.3", testHash, tgt)

@@ -125,7 +125,7 @@ func TestCheckAdvisories(t *testing.T) {
 func TestFactoryRefusesABrokenAdvisoryTreeUpFront(t *testing.T) {
 	dir := advisoryTree(t, map[string]string{"curl.se": file("curl.se", "  - id: CVE-1\n    events: []\n")})
 	rc, out, errb := run2(t, "factory", "--platform", "linux/x86-64",
-		"--advisories", dir, "--pantry", t.TempDir(), "--to", "oci://example.invalid/x")
+		"--advisories", dir, "--recipe-dir", t.TempDir(), "--to", "oci://example.invalid/x")
 	if rc == 0 {
 		t.Fatalf("a broken advisory tree did not stop the factory (out %q)", out)
 	}
@@ -251,7 +251,7 @@ func TestTheFactorySuiteCannotWriteIntoTheRepository(t *testing.T) {
 func TestFactoryAnnouncesTheAdvisoryTreeItLoaded(t *testing.T) {
 	dir := advisoryTree(t, map[string]string{"curl.se": file("curl.se", detected)})
 	_, out, _ := run2(t, "factory", "--platform", "linux/x86-64",
-		"--advisories", dir, "--pantry", t.TempDir(), "--to", "oci://example.invalid/x")
+		"--advisories", dir, "--recipe-dir", t.TempDir(), "--to", "oci://example.invalid/x")
 	if !strings.Contains(out, "advisories: 1 project(s) with records") {
 		t.Errorf("want the count on stdout:\n%s", out)
 	}

@@ -965,7 +965,7 @@ func SanitizedEnv(home, zpkgDir string) []string {
 	//   mkdir: error while loading shared libraries: libc.so.6: cannot open …
 	// The caller opting in (an ENV in the builder image) is a deliberate choice,
 	// not ambient host state.
-	// ZPKG_DIST / ZPKG_PANTRY / ZPKG_PANTRY_OVERLAY choose WHERE the `pkgx +deps`
+	// ZPKG_DIST / ZPKG_RECIPES / ZPKG_RECIPES_OVERLAY choose WHERE the `pkgx +deps`
 	// line of the generated script resolves from. Dropping them silently sent
 	// every build back to the default ghcr.io registry and the upstream pantry —
 	// a local registry cache was bypassed by the builds it exists for, and a
@@ -1031,15 +1031,15 @@ func SanitizedEnv(home, zpkgDir string) []string {
 // and these are provided — CONDITIONALLY, so they do not appear in
 // SanitizedEnv's RESULT unless the linting process happens to have them set.
 // A check built on the result alone would therefore refuse a recipe reading
-// `$ZPKG_PANTRY` on any machine that had not exported it, which is a false
+// `$ZPKG_RECIPES` on any machine that had not exported it, which is a false
 // refusal that depends on the tester's shell.
 //
 // Copying the names into that check instead would have made a second list free
 // to drift from this one — which is the exact defect go-zpkg/zpkb#494 exists to
 // catch, since four recipes shipped reading a variable whose name had moved.
 var PassThroughEnv = []string{
-	"LANG", "LOGNAME", "USER", "TERM", "ZPKG_PANTRY_DIR", "ZPKG_PANTRY_PATH",
-	"ZPKG_DIST", "ZPKG_CACHE", "ZPKG_PANTRY", "ZPKG_PANTRY_OVERLAY", "ZPKG_VERIFY",
+	"LANG", "LOGNAME", "USER", "TERM", "ZPKG_RECIPE_DIR", "ZPKG_RECIPES_PATH",
+	"ZPKG_DIST", "ZPKG_CACHE", "ZPKG_RECIPES", "ZPKG_RECIPES_OVERLAY", "ZPKG_VERIFY",
 	"LD_LIBRARY_PATH", "QEMU_RESERVED_VA",
 }
 

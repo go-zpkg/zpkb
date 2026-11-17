@@ -206,7 +206,7 @@ func TestRunnableLockPinsWhatIsPublishedAndSaysSo(t *testing.T) {
 	fakeConstrainedPick(t, func(string, []string) (string, error) { return "1.2.3", nil })
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-runnable", "app.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-runnable", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	got := out.String()
@@ -221,7 +221,7 @@ func TestRunnableLockPinsWhatIsPublishedAndSaysSo(t *testing.T) {
 	// would be a silent change of meaning for every existing lock.
 	out.Reset()
 	errb.Reset()
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	if !strings.Contains(out.String(), `"app.org" = { version = "1.2.4"`) {
@@ -249,7 +249,7 @@ func TestRunnableLockRefusesAProjectWithNothingPublished(t *testing.T) {
 	fakeConstrainedPick(t, func(string, []string) (string, error) { return "", errors.New("NAME_UNKNOWN") })
 
 	var out, errb bytes.Buffer
-	code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-runnable", "lib.org"}, &out, &errb)
+	code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-runnable", "lib.org"}, &out, &errb)
 	if code == 0 {
 		t.Error("a runnable lock with an uninstallable line reported success")
 	}
@@ -264,7 +264,7 @@ func TestRunnableLockRefusesAProjectWithNothingPublished(t *testing.T) {
 func TestCheckRefusesRunnableOnTheCommandLine(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{"lib.org": lockableRecipe})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--check", "some.lock.hcl", "-runnable"}, &out, &errb); code != 2 {
+	if code := runLock([]string{"--recipe-dir", p, "--check", "some.lock.hcl", "-runnable"}, &out, &errb); code != 2 {
 		t.Fatalf("code=%d, want 2; err=%q", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "would ask a different question") {
@@ -304,7 +304,7 @@ func TestRunnablePassesTheClosuresDemandsToTheResolver(t *testing.T) {
 	})
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-runnable", "app.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-runnable", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	if got := (*seen)["lib.org"]; len(got) != 1 || got[0] != "^1" {
@@ -381,7 +381,7 @@ func TestRunnableLockHandsTheRootsConstraintToThePublishedResolver(t *testing.T)
 	seen := fakeConstrainedPick(t, func(_ string, _ []string) (string, error) { return "1.2.3", nil })
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-runnable", "app.org@1.2.3"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-runnable", "app.org@1.2.3"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	got := (*seen)["app.org"]
@@ -397,7 +397,7 @@ func TestRunnableLockHandsNothingWhenTheRootIsUnconstrained(t *testing.T) {
 	seen := fakeConstrainedPick(t, func(_ string, _ []string) (string, error) { return "1.2.4", nil })
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-runnable", "app.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-runnable", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	if got := (*seen)["app.org"]; len(got) != 0 {
@@ -418,7 +418,7 @@ func TestLockCheckHandsTheRootsConstraintToThePublishedResolver(t *testing.T) {
 	fakeConstrainedPick(t, func(_ string, _ []string) (string, error) { return "1.2.3", nil })
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "-runnable", "-o", lockPath, "app.org@1.2.3"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "-runnable", "-o", lockPath, "app.org@1.2.3"}, &out, &errb); code != 0 {
 		t.Fatalf("writing: code=%d err=%q", code, errb.String())
 	}
 	if err := os.WriteFile(lockPath, (*files)[lockPath], 0o644); err != nil {
@@ -429,7 +429,7 @@ func TestLockCheckHandsTheRootsConstraintToThePublishedResolver(t *testing.T) {
 	seen := fakeConstrainedPick(t, func(_ string, _ []string) (string, error) { return "1.2.3", nil })
 	out.Reset()
 	errb.Reset()
-	if code := runLock([]string{"--pantry", p, "--check", lockPath}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--check", lockPath}, &out, &errb); code != 0 {
 		t.Fatalf("check: code=%d\n%s%s", code, out.String(), errb.String())
 	}
 	got := (*seen)["app.org"]

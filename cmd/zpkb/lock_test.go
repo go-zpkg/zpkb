@@ -70,7 +70,7 @@ func TestLockPinsTheResolvedVersions(t *testing.T) {
 		"lib.org": lockableRecipe,
 	})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	got := out.String()
@@ -97,7 +97,7 @@ func TestLockPinsTheResolvedVersions(t *testing.T) {
 func TestLockSaysWhenThereIsNoRevisionToRecord(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{"lib.org": lockableRecipe})
 	var out, errb bytes.Buffer
-	runLock([]string{"--pantry", p, "lib.org"}, &out, &errb)
+	runLock([]string{"--recipe-dir", p, "lib.org"}, &out, &errb)
 	if !strings.Contains(out.String(), "not a git checkout") {
 		t.Errorf("a non-git pantry was not reported:\n%s", out.String())
 	}
@@ -110,7 +110,7 @@ func TestAnUnresolvedProjectFailsTheLock(t *testing.T) {
 		"lib.org": "distributable:\n  url: https://x/v{{version}}.tgz\nbuild:\n  script: [make]\n",
 	})
 	var out, errb bytes.Buffer
-	code := runLock([]string{"--pantry", p, "lib.org"}, &out, &errb)
+	code := runLock([]string{"--recipe-dir", p, "lib.org"}, &out, &errb)
 	if code == 0 {
 		t.Error("a lock with an unresolved project reported success")
 	}
@@ -135,7 +135,7 @@ func TestLockRefusesAnEmptyRequest(t *testing.T) {
 func TestLockRefusesAFlagAfterAProjectName(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{"lib.org": lockableRecipe})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "lib.org", "-o", "/tmp/x"}, &out, &errb); code != 2 {
+	if code := runLock([]string{"--recipe-dir", p, "lib.org", "-o", "/tmp/x"}, &out, &errb); code != 2 {
 		t.Fatalf("code=%d; want 2", code)
 	}
 	if !strings.Contains(errb.String(), "comes after a project name") {
@@ -146,7 +146,7 @@ func TestLockRefusesAFlagAfterAProjectName(t *testing.T) {
 func TestLockWritesToAFileWhenAsked(t *testing.T) {
 	p, files := lockbed(t, map[string]string{"lib.org": lockableRecipe})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "-o", "/tmp/out.hcl", "lib.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "-o", "/tmp/out.hcl", "lib.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	b, ok := (*files)["/tmp/out.hcl"]
@@ -168,7 +168,7 @@ func TestLockReportsAWriteFailure(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{"lib.org": lockableRecipe})
 	osWriteFile = func(string, []byte, os.FileMode) error { return errors.New("read-only file system") }
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "-o", "/x", "lib.org"}, &out, &errb); code != 1 {
+	if code := runLock([]string{"--recipe-dir", p, "-o", "/x", "lib.org"}, &out, &errb); code != 1 {
 		t.Fatalf("code=%d; want 1", code)
 	}
 	if !strings.Contains(errb.String(), "read-only file system") {
@@ -180,7 +180,7 @@ func TestLockReportsAWriteFailure(t *testing.T) {
 func TestLockRefusesAnEmptyClosure(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "nope.org"}, &out, &errb); code != 1 {
+	if code := runLock([]string{"--recipe-dir", p, "nope.org"}, &out, &errb); code != 1 {
 		t.Fatalf("code=%d; want 1", code)
 	}
 	if !strings.Contains(errb.String(), "is a failure and not a clean result") {
@@ -224,7 +224,7 @@ func TestLockRecordsBothRevisions(t *testing.T) {
 	}
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--overlay", ov, "lib.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--overlay", ov, "lib.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	if !strings.Contains(out.String(), `overlay          = "`+h.String()+`"`) {
@@ -271,7 +271,7 @@ func TestLockNamesAProjectWhoseRecipeVanishes(t *testing.T) {
 	t.Cleanup(func() { recipeLoader = prev })
 
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "app.org"}, &out, &errb); code != 1 {
+	if code := runLock([]string{"--recipe-dir", p, "app.org"}, &out, &errb); code != 1 {
 		t.Fatalf("code=%d; want 1", code)
 	}
 	if !strings.Contains(errb.String(), "unresolved: lib.org (no recipe:") {
@@ -290,7 +290,7 @@ func TestLockRefusesUnparseableOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--overrides", ov, "lib.org"}, &out, &errb); code != 2 {
+	if code := runLock([]string{"--recipe-dir", p, "--overrides", ov, "lib.org"}, &out, &errb); code != 2 {
 		t.Fatalf("code=%d; want 2 (stderr=%q)", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "lock:") {
@@ -301,7 +301,7 @@ func TestLockRefusesUnparseableOverrides(t *testing.T) {
 // TestLockDispatch covers the main-loop `case "lock"` route.
 func TestLockDispatch(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{"lib.org": lockableRecipe})
-	code, out, errs := run2(t, "lock", "--pantry", p, "lib.org")
+	code, out, errs := run2(t, "lock", "--recipe-dir", p, "lib.org")
 	if code != 0 {
 		t.Fatalf("dispatch lock code=%d err=%q", code, errs)
 	}
@@ -332,7 +332,7 @@ func TestSpecHashMovesExactlyTheSubtreeAbove(t *testing.T) {
 		t.Helper()
 		p, _ := lockbed(t, recipes)
 		var out, errb bytes.Buffer
-		if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "top.org", "other.org"}, &out, &errb); code != 0 {
+		if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "top.org", "other.org"}, &out, &errb); code != 0 {
 			t.Fatalf("code=%d err=%q", code, errb.String())
 		}
 		got := map[string]string{}
@@ -395,7 +395,7 @@ func TestSpecHashIgnoresFormattingAndSeesThePlatform(t *testing.T) {
 		t.Helper()
 		p, _ := lockbed(t, map[string]string{"lib.org": body})
 		var out, errb bytes.Buffer
-		if code := runLock([]string{"--pantry", p, "--platform", platform, "lib.org"}, &out, &errb); code != 0 {
+		if code := runLock([]string{"--recipe-dir", p, "--platform", platform, "lib.org"}, &out, &errb); code != 0 {
 			t.Fatalf("code=%d err=%q", code, errb.String())
 		}
 		_, s, _ := strings.Cut(out.String(), `spec = "`)
@@ -482,7 +482,7 @@ func TestLockNamesAProjectWhoseRecipeCannotBeHashed(t *testing.T) {
 		"odd.org": "versions:\n  - 1.2.3\nbuild:\n  script: [make]\nprovides:\n  true: x\n",
 	})
 	var out, errb bytes.Buffer
-	code := runLock([]string{"--pantry", p, "odd.org"}, &out, &errb)
+	code := runLock([]string{"--recipe-dir", p, "odd.org"}, &out, &errb)
 	if code != 1 {
 		t.Fatalf("code=%d; want 1 (stderr=%q)", code, errb.String())
 	}
@@ -508,7 +508,7 @@ func TestLockNamesAProjectWhoseRecipeCannotBeHashed(t *testing.T) {
 func TestLockAppliesARootsOwnConstraint(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{"app.org": lockableRecipe})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "app.org@1.2.3"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "app.org@1.2.3"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	got := out.String()
@@ -527,7 +527,7 @@ func TestLockAppliesARootsOwnConstraint(t *testing.T) {
 func TestLockWithoutAConstraintStillTakesTheNewest(t *testing.T) {
 	p, _ := lockbed(t, map[string]string{"app.org": lockableRecipe})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	if !strings.Contains(out.String(), `"app.org" = { version = "1.2.4"`) {
@@ -545,7 +545,7 @@ func TestLockDoesNotPropagateARootsConstraintToItsDependencies(t *testing.T) {
 		"lib.org": lockableRecipe,
 	})
 	var out, errb bytes.Buffer
-	if code := runLock([]string{"--pantry", p, "--platform", "linux/x86-64", "app.org@1.2.3"}, &out, &errb); code != 0 {
+	if code := runLock([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "app.org@1.2.3"}, &out, &errb); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errb.String())
 	}
 	got := out.String()

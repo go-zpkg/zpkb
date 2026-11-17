@@ -40,7 +40,7 @@ func graphPantry(t *testing.T) string {
 func TestClosureBuildReachesWhatRuntimeCannot(t *testing.T) {
 	p := graphPantry(t)
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	if strings.Contains(out.String(), "tool.org") {
@@ -48,7 +48,7 @@ func TestClosureBuildReachesWhatRuntimeCannot(t *testing.T) {
 	}
 
 	out.Reset()
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "--build", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--build", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	got := out.String()
@@ -68,7 +68,7 @@ func TestClosureBuildReachesWhatRuntimeCannot(t *testing.T) {
 func TestClosureBuildTerminatesOnACycle(t *testing.T) {
 	p := graphPantry(t)
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "--build", "a.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--build", "a.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	got := out.String()
@@ -89,7 +89,7 @@ func TestClosureBuildTerminatesOnACycle(t *testing.T) {
 func TestClosureConstraints(t *testing.T) {
 	p := graphPantry(t)
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "--build", "--constraints", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--build", "--constraints", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	got := out.String()
@@ -111,7 +111,7 @@ func TestClosureConstraints(t *testing.T) {
 func TestClosureImplicitNamesWhatRecipesCannot(t *testing.T) {
 	p := graphPantry(t)
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "--implicit", "app.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--implicit", "app.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
 	got := out.String()
@@ -123,7 +123,7 @@ func TestClosureImplicitNamesWhatRecipesCannot(t *testing.T) {
 	}
 	// They are NOT part of the order: these may be pulled in, not are.
 	plain := bytes.Buffer{}
-	runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "--build", "app.org"}, &plain, &errb)
+	runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--build", "app.org"}, &plain, &errb)
 	if strings.Contains(plain.String(), "libxcrypt") {
 		t.Errorf("the order itself must not claim them:\n%s", plain.String())
 	}
@@ -138,7 +138,7 @@ func TestClosureImplicitNamesWhatRecipesCannot(t *testing.T) {
 func TestClosureConstraintsGroupsAndDeduplicates(t *testing.T) {
 	p := graphPantry(t)
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "--build", "--constraints",
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--build", "--constraints",
 		"app.org", "twice.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())
 	}
@@ -158,7 +158,7 @@ func TestClosureGraphNamesAMissingRecipe(t *testing.T) {
 	p := graphPantry(t)
 	writeClosureRecipe(t, p, "needy.org", "dependencies:\n  nowhere.org: '*'\nbuild: make\n")
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", p, "--platform", "linux/x86-64", "--build", "needy.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", p, "--platform", "linux/x86-64", "--build", "needy.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d", code)
 	}
 	if !strings.Contains(errb.String(), "skip nowhere.org") {
@@ -184,7 +184,7 @@ func TestClosureReadsTheOverlay(t *testing.T) {
 	writeClosureRecipe(t, pan, "crypt.org", "build: make\n")
 
 	var out, errb bytes.Buffer
-	if code := runClosure([]string{"--pantry", pan, "--platform", "linux/x86-64", "--build", "perl.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", pan, "--platform", "linux/x86-64", "--build", "perl.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d", code)
 	}
 	if strings.Contains(out.String(), "crypt.org") {
@@ -192,7 +192,7 @@ func TestClosureReadsTheOverlay(t *testing.T) {
 	}
 
 	out.Reset()
-	if code := runClosure([]string{"--pantry", pan, "--overlay", ov, "--platform", "linux/x86-64", "--build", "perl.org"}, &out, &errb); code != 0 {
+	if code := runClosure([]string{"--recipe-dir", pan, "--overlay", ov, "--platform", "linux/x86-64", "--build", "perl.org"}, &out, &errb); code != 0 {
 		t.Fatalf("code = %d", code)
 	}
 	if !strings.Contains(out.String(), "crypt.org") {
@@ -229,7 +229,7 @@ func TestClosureMergesAReducedOverlayEntry(t *testing.T) {
 	}
 
 	var out, errb bytes.Buffer
-	code := runClosure([]string{"--pantry", pan, "--overlay", ov, "--overrides", ovr,
+	code := runClosure([]string{"--recipe-dir", pan, "--overlay", ov, "--overrides", ovr,
 		"--platform", "linux/x86-64", "--build", "app.org"}, &out, &errb)
 	if code != 0 {
 		t.Fatalf("code = %d: %s", code, errb.String())

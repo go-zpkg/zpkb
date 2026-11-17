@@ -268,7 +268,7 @@ func TestReportSplitsNamesBothVersionsAndSaysTheyAreCandidates(t *testing.T) {
 // then run against the UNPATCHED pantry and report the one instance of this
 // class that an override already fixes.
 func TestDepsplitRefusesAnUnreadableOverrideDir(t *testing.T) {
-	code, _, errb := run2(t, "depsplit", "--overrides", "/definitely/not/here", "--pantry", t.TempDir())
+	code, _, errb := run2(t, "depsplit", "--overrides", "/definitely/not/here", "--recipe-dir", t.TempDir())
 	if code == 0 {
 		t.Fatalf("want a non-zero exit, got %d: %s", code, errb)
 	}
@@ -288,7 +288,7 @@ func TestDepsplitRefusesAnUnparsableOverride(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ov, "bad.hcl"), []byte("project = \n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, _, errb := run2(t, "depsplit", "--overrides", ov, "--pantry", t.TempDir())
+	code, _, errb := run2(t, "depsplit", "--overrides", ov, "--recipe-dir", t.TempDir())
 	if code != 2 {
 		t.Fatalf("want 2, got %d: %s", code, errb)
 	}
@@ -350,7 +350,7 @@ func TestDepsplitRunReportsTheSplit(t *testing.T) {
 	}, nil)
 	dir := writePantry(t, map[string]string{"protobuf.dev": doubledRecipe})
 
-	code, out, _ := run2(t, "depsplit", "--overrides", "", "--pantry", dir, "--platform", "darwin/aarch64")
+	code, out, _ := run2(t, "depsplit", "--overrides", "", "--recipe-dir", dir, "--platform", "darwin/aarch64")
 	if code != 0 {
 		t.Fatalf("want 0, got %d: %s", code, out)
 	}
@@ -360,7 +360,7 @@ func TestDepsplitRunReportsTheSplit(t *testing.T) {
 		}
 	}
 	// --fail is what a CI gate uses.
-	code, _, _ = run2(t, "depsplit", "--overrides", "", "--pantry", dir, "--platform", "darwin/aarch64", "--fail")
+	code, _, _ = run2(t, "depsplit", "--overrides", "", "--recipe-dir", dir, "--platform", "darwin/aarch64", "--fail")
 	if code != 1 {
 		t.Fatalf("--fail must exit 1 when something is found, got %d", code)
 	}
@@ -370,7 +370,7 @@ func TestDepsplitRunReportsTheSplit(t *testing.T) {
 func TestDepsplitRunIsGreenWhenThereIsNothing(t *testing.T) {
 	withRegistry(t, splitRegistry{}, nil)
 	dir := writePantry(t, map[string]string{"agreeing.org": agreeingRecipe})
-	code, out, _ := run2(t, "depsplit", "--overrides", "", "--pantry", dir, "--fail")
+	code, out, _ := run2(t, "depsplit", "--overrides", "", "--recipe-dir", dir, "--fail")
 	if code != 0 {
 		t.Fatalf("want 0, got %d: %s", code, out)
 	}
@@ -379,7 +379,7 @@ func TestDepsplitRunIsGreenWhenThereIsNothing(t *testing.T) {
 func TestDepsplitRunReportsARegistryItCannotReach(t *testing.T) {
 	withRegistry(t, nil, errors.New("no registry"))
 	dir := writePantry(t, map[string]string{"protobuf.dev": doubledRecipe})
-	code, _, errb := run2(t, "depsplit", "--overrides", "", "--pantry", dir)
+	code, _, errb := run2(t, "depsplit", "--overrides", "", "--recipe-dir", dir)
 	if code != 1 {
 		t.Fatalf("want 1, got %d: %s", code, errb)
 	}
@@ -390,7 +390,7 @@ func TestDepsplitRunReportsAWalkThatFailed(t *testing.T) {
 	prev := filepathWalkDir
 	filepathWalkDir = func(string, fs.WalkDirFunc) error { return errors.New("tree gone") }
 	defer restoreWalk(prev)
-	code, _, errb := run2(t, "depsplit", "--overrides", "", "--pantry", t.TempDir())
+	code, _, errb := run2(t, "depsplit", "--overrides", "", "--recipe-dir", t.TempDir())
 	if code != 1 {
 		t.Fatalf("want 1, got %d: %s", code, errb)
 	}
@@ -472,7 +472,7 @@ edits = [
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ := run2(t, "depsplit", "--overrides", ov, "--pantry", dir, "--platform", "darwin/aarch64", "--fail")
+	code, out, _ := run2(t, "depsplit", "--overrides", ov, "--recipe-dir", dir, "--platform", "darwin/aarch64", "--fail")
 	if code != 0 {
 		t.Fatalf("the override makes the lists agree; want 0, got %d:\n%s", code, out)
 	}

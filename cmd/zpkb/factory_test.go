@@ -80,7 +80,7 @@ func newFactoryHarness(t *testing.T) *factoryHarness {
 		factoryBuild, factoryHasPlatform, buildFactory, lookPath = bu, hp, bf, lp
 		factoryPlan = pl
 	})
-	for _, k := range []string{"ZPKB_TARGET", "PLATFORM", "PANTRY", "RECIPES", "DIST", "MAX_VERSIONS", "FORCE", "SIGNING_KEY", "SOURCE_DATE_EPOCH"} {
+	for _, k := range []string{"ZPKB_TARGET", "PLATFORM", "RECIPE_DIR", "RECIPES", "DIST", "MAX_VERSIONS", "FORCE", "SIGNING_KEY", "SOURCE_DATE_EPOCH"} {
 		t.Setenv(k, "")
 	}
 
@@ -168,7 +168,7 @@ func specTag(project, version string) string {
 func (h *factoryHarness) args(extra ...string) []string {
 	return append([]string{
 		"--platform", "linux/x86-64",
-		"--pantry", h.pantry,
+		"--recipe-dir", h.pantry,
 		"--overrides", "",
 		"--artifacts", h.artifacts,
 		"--failures", h.failures,
@@ -1007,7 +1007,7 @@ func TestFactoryUpstreamSeamsAreReal(t *testing.T) {
 func TestFactoryDispatch(t *testing.T) {
 	h := newFactoryHarness(t)
 	writeClosureRecipe(t, h.pantry, "lib.org", "versions:\n  github: a/lib/tags\nbuild: make\n")
-	code, out, errs := run2(t, "factory", "--platform", "linux/x86-64", "--pantry", h.pantry,
+	code, out, errs := run2(t, "factory", "--platform", "linux/x86-64", "--recipe-dir", h.pantry,
 		"--overrides", "", "--failures", h.failures, "--failures-detail", h.detail, "--tests", h.tests,
 		"--recipes", "lib.org", "--max-versions", "1")
 	if code != 0 {

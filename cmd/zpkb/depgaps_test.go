@@ -203,7 +203,7 @@ func TestRunDepgaps(t *testing.T) {
 	}
 
 	var out, errb strings.Builder
-	code := runDepgaps([]string{"--pantry", root, "--overrides", "", "--registry", reg}, &out, &errb)
+	code := runDepgaps([]string{"--recipe-dir", root, "--overrides", "", "--registry", reg}, &out, &errb)
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errb.String())
 	}
@@ -216,7 +216,7 @@ func TestRunDepgaps(t *testing.T) {
 		t.Errorf("code=%d, want 2", code)
 	}
 	// A registry that cannot be read must fail, not rank nothing.
-	if code := runDepgaps([]string{"--pantry", root, "--overrides", "", "--registry", "/nope.json"}, io.Discard, io.Discard); code != 1 {
+	if code := runDepgaps([]string{"--recipe-dir", root, "--overrides", "", "--registry", "/nope.json"}, io.Discard, io.Discard); code != 1 {
 		t.Errorf("code=%d, want 1", code)
 	}
 	// An override that does not apply is skip-loud by design, so the run
@@ -230,7 +230,7 @@ func TestRunDepgaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	var skipErr strings.Builder
-	if code := runDepgaps([]string{"--pantry", root, "--overrides", bad, "--registry", reg}, io.Discard, &skipErr); code != 0 {
+	if code := runDepgaps([]string{"--recipe-dir", root, "--overrides", bad, "--registry", reg}, io.Discard, &skipErr); code != 0 {
 		t.Errorf("code=%d, want 0", code)
 	}
 	if !strings.Contains(skipErr.String(), "did NOT apply") {
@@ -239,7 +239,7 @@ func TestRunDepgaps(t *testing.T) {
 
 	// The one shape Apply itself refuses: a directory whose name is not a valid
 	// glob pattern.
-	if code := runDepgaps([]string{"--pantry", root, "--overrides", "[", "--registry", reg}, io.Discard, io.Discard); code != 1 {
+	if code := runDepgaps([]string{"--recipe-dir", root, "--overrides", "[", "--registry", reg}, io.Discard, io.Discard); code != 1 {
 		t.Errorf("code=%d, want 1", code)
 	}
 }
@@ -294,7 +294,7 @@ func TestRunDepgapsSurfacesAWalkFailure(t *testing.T) {
 	filepathWalkDir = func(string, fs.WalkDirFunc) error { return errors.New("tree gone") }
 
 	var errb strings.Builder
-	if code := runDepgaps([]string{"--pantry", root, "--overrides", "", "--registry", reg}, io.Discard, &errb); code != 1 {
+	if code := runDepgaps([]string{"--recipe-dir", root, "--overrides", "", "--registry", reg}, io.Discard, &errb); code != 1 {
 		t.Fatalf("code=%d, want 1", code)
 	}
 	if !strings.Contains(errb.String(), "tree gone") {
@@ -344,7 +344,7 @@ func TestRunDepgapsPrintsBothHalves(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	if code := runDepgaps([]string{"--pantry", root, "--overrides", "", "--registry", reg}, &out, io.Discard); code != 0 {
+	if code := runDepgaps([]string{"--recipe-dir", root, "--overrides", "", "--registry", reg}, &out, io.Discard); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
 	if !strings.Contains(out.String(), "openssl.org ^1.1") {

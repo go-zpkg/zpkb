@@ -207,19 +207,19 @@ func TestSanitizedEnv(t *testing.T) {
 	// Where the build's own `pkgx +deps` resolves from: a local registry cache
 	// and a corrected overlay only apply if they survive the sanitised env.
 	t.Setenv("ZPKG_DIST", "oci://http://cache:5111/go-zpkg/packages")
-	t.Setenv("ZPKG_PANTRY", "https://pantry.example/projects")
-	t.Setenv("ZPKG_PANTRY_OVERLAY", "https://overlay.example/projects")
+	t.Setenv("ZPKG_RECIPES", "https://pantry.example/projects")
+	t.Setenv("ZPKG_RECIPES_OVERLAY", "https://overlay.example/projects")
 	// The opt-out a test harness needs when it points at unsigned fixtures.
 	t.Setenv("ZPKG_VERIFY", "0")
-	os.Unsetenv("ZPKG_PANTRY_DIR")
+	os.Unsetenv("ZPKG_RECIPE_DIR")
 	env := SanitizedEnv("/h", "/pkgx")
 	joined := strings.Join(env, "\n")
-	for _, want := range []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/h", "ZPKG_DIR=/pkgx", "TERM=xterm", "MAKEFLAGS=ACLOCAL=true AUTOMAKE=true AUTOCONF=true AUTOHEADER=true AUTOPOINT=true", "FORCE_UNSAFE_CONFIGURE=1", "ZPKG_DIST=oci://http://cache:5111/go-zpkg/packages", "ZPKG_PANTRY=https://pantry.example/projects", "ZPKG_PANTRY_OVERLAY=https://overlay.example/projects", "ZPKG_VERIFY=0"} {
+	for _, want := range []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=/h", "ZPKG_DIR=/pkgx", "TERM=xterm", "MAKEFLAGS=ACLOCAL=true AUTOMAKE=true AUTOCONF=true AUTOHEADER=true AUTOPOINT=true", "FORCE_UNSAFE_CONFIGURE=1", "ZPKG_DIST=oci://http://cache:5111/go-zpkg/packages", "ZPKG_RECIPES=https://pantry.example/projects", "ZPKG_RECIPES_OVERLAY=https://overlay.example/projects", "ZPKG_VERIFY=0"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("SanitizedEnv missing %q in %v", want, env)
 		}
 	}
-	if strings.Contains(joined, "ZPKG_PANTRY_DIR") {
+	if strings.Contains(joined, "ZPKG_RECIPE_DIR") {
 		t.Error("unset var leaked into SanitizedEnv")
 	}
 

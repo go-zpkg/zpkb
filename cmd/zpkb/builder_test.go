@@ -307,7 +307,7 @@ func TestMicroVMConfigIsBootable(t *testing.T) {
 	if strings.Contains(env, root) {
 		t.Errorf("env leaks the staging root:\n%s", env)
 	}
-	for _, want := range []string{"ZPKG_DIR=" + guestZpkgDir, "ZPKG_DIST=oci://", "ZPKG_PANTRY_OVERLAY=https://", "HOME=/root", "TMPDIR=/tmp"} {
+	for _, want := range []string{"ZPKG_DIR=" + guestZpkgDir, "ZPKG_DIST=oci://", "ZPKG_RECIPES_OVERLAY=https://", "HOME=/root", "TMPDIR=/tmp"} {
 		if !strings.Contains(env, want) {
 			t.Errorf("env missing %q:\n%s", want, env)
 		}
@@ -333,7 +333,7 @@ func TestMicroVMConfigOmitsUnsetSources(t *testing.T) {
 	if strings.Contains(string(b), "ZPKG_DIST=\"") || strings.Contains(string(b), "ZPKG_DIST=\n") {
 		t.Errorf("baked an empty ZPKG_DIST:\n%s", b)
 	}
-	if strings.Contains(string(b), "ZPKG_PANTRY_OVERLAY") {
+	if strings.Contains(string(b), "ZPKG_RECIPES_OVERLAY") {
 		t.Errorf("baked an unset overlay:\n%s", b)
 	}
 }
@@ -736,7 +736,7 @@ func TestFactoryRejectsUnknownCompress(t *testing.T) {
 	t.Cleanup(func() { artifactpkg.Codec = orig })
 	var out, errb bytes.Buffer
 
-	if code := runFactory([]string{"--compress", "brotli", "--platform", "linux/aarch64", "--recipes", "lz4.org", "--pantry", t.TempDir()}, &out, &errb); code != 2 {
+	if code := runFactory([]string{"--compress", "brotli", "--platform", "linux/aarch64", "--recipes", "lz4.org", "--recipe-dir", t.TempDir()}, &out, &errb); code != 2 {
 		t.Errorf("exit %d, want 2", code)
 	}
 	if !strings.Contains(errb.String(), "brotli") {
