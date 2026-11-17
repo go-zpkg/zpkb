@@ -237,7 +237,7 @@ func TestLoadFile(t *testing.T) {
 // `bk depgaps` walks a pantry, accepts any filename IsRecipe knows — so it
 // finds `package.hcl` — and then read those bytes with the YAML front-end.
 // Every HCL recipe became a parse error, which it skipped as malformed: 210 of
-// pantry-overlay's 213 recipes examined by nobody, reported as a clean result
+// the recipes tree's 213 recipes examined by nobody, reported as a clean result
 // (go-zpkg/bk#389).
 func TestParseNamedPicksTheFrontEndByFilename(t *testing.T) {
 	hclRec, err := ParseNamed([]byte(hclSrc), "package.hcl")

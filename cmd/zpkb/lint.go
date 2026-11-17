@@ -55,7 +55,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	requireProv := fset.Bool("require-provenance", false,
 		"fail a recipe that does not record which of the project's own files its build came from")
 	// ⛔⛔ AN OVERLAY ENTRY IS A FRAGMENT, AND A PANTRY CANNOT BE MADE OF
-	// FRAGMENTS. go-zpkg/pantry-overlay#50 reduced all 183 entries to the keys
+	// FRAGMENTS. go-zpkg/recipes#50 reduced all 183 entries to the keys
 	// they CHANGE, which was right for an overlay: artifact merges it over
 	// PantryBase, so an omitted key is inherited from upstream and a small
 	// curated tree can correct a stale constraint without forking 1700 files.
@@ -76,7 +76,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		"fail a recipe that cannot resolve alone — one that needs another recipe merged underneath it")
 	// ⛔⛔ HCL IS THE ONLY FORM OUR OWN RECIPES TAKE — a decision, taken by the
 	// project's owner on 2026-11-15: "nous n'avons plus besoin YAML, on fait
-	// tout en hcl". go-zpkg/pantry-overlay reached it the same morning: 222
+	// tout en hcl". go-zpkg/recipes reached it the same morning: 222
 	// package.hcl and zero package.yml.
 	//
 	// A STATED RULE WITH NOTHING ENFORCING IT IS A RULE THAT GETS BROKEN, and
@@ -124,7 +124,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// disagree too — which is the defect this file's first check already
 	// carries in its own comment.
 	//
-	// ⭐ No ratchet: swept over all 222 recipes of go-zpkg/pantry-overlay, that
+	// ⭐ No ratchet: swept over all 222 recipes of go-zpkg/recipes, that
 	// one block was the only refusal in the tree, so zero is where this starts.
 	renderScripts := fset.Bool("render-scripts", false,
 		"fail a recipe whose build or test script the builder's own renderer cannot render")
@@ -144,7 +144,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// deleted the .bak that would have shown it. The kernel's passed `CC=""` on
 	// a make command line, which beats kbuild's own assignment.
 	//
-	// go-zpkg/pantry-overlay#97, which moved these recipes to the MIDDLE spelling
+	// go-zpkg/recipes#97, which moved these recipes to the MIDDLE spelling
 	// of the prefix, predicted this in its own description: "a recipe switched
 	// ahead of it reads an UNSET variable, and for these two that is silent". It
 	// was right, and it happened again to one of the two recipes it described,
@@ -163,14 +163,14 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// own builder. A requirement about what OUR builder provides belongs to the
 	// invocation pointed at OUR recipes.
 	//
-	// ⭐ NO RATCHET: measured over go-zpkg/pantry-overlay at 233 recipes after
-	// go-zpkg/pantry-overlay#138 fixed the kernel's, this reports ZERO, so a
+	// ⭐ NO RATCHET: measured over go-zpkg/recipes at 233 recipes after
+	// go-zpkg/recipes#138 fixed the kernel's, this reports ZERO, so a
 	// stated ceiling would be slack where none is needed.
 	requireKnownEnv := fset.Bool("require-known-env", false,
 		"fail a recipe whose script reads a build-environment variable in our own "+
 			"namespaces that the builder does not export")
 	// ⛔⛔ A GATE THAT STARTS RED IS NOT A GATE, IT IS A LIGHT NOBODY READS, and
-	// pantry-overlay's own ci.yml carries that lesson already: its lint step
+	// the recipes tree's own ci.yml carries that lesson already: its lint step
 	// invoked a module path that no longer existed, so every pull request after
 	// the rename failed there, on the toolchain rather than on a recipe, and no
 	// recipe was read by the builder's loader for weeks.
@@ -190,7 +190,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		"with --require-standalone: the number of fragments this tree still has. "+
 			"More fails as a regression, FEWER fails as a ceiling to lower")
 	// ⛔⛔ --require-provenance NEEDED THE SAME THIRD OPTION, AND ITS OWN LANE
-	// SAID SO. go-zpkg/pantry-overlay's ci.yml carried, in a comment beside the
+	// SAID SO. go-zpkg/recipes' ci.yml carried, in a comment beside the
 	// step it did NOT add: "--require-provenance is NOT here yet. 14 of 216
 	// record none, and there is no ratchet for it, so turning it on would be the
 	// red light this avoids. It belongs here once those 14 are written or once it
@@ -362,7 +362,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%d script block(s) of %d project(s) cannot be rendered by the "+
 			"builder's own renderer, so the step they describe would never run — `lint` parsing a "+
 			"recipe and `buildscript` rendering its script are different questions, and only this "+
-			"one is asked here (go-zpkg/pantry-overlay#107):\n", len(unrendered), len(projects))
+			"one is asked here (go-zpkg/recipes#107):\n", len(unrendered), len(projects))
 		fmt.Fprintln(stderr, strings.Join(unrendered, "\n"))
 	}
 	if len(unknownEnv) > 0 {
@@ -379,7 +379,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		sort.Strings(notHCL)
 		fmt.Fprintf(stderr, "%d recipe file(s) of %d project(s) are not %s — our own trees hold "+
 			"HCL only, and `zpkb tohcl` DROPS EVERY COMMENT, so a conversion is read and "+
-			"rewritten by a person rather than piped (go-zpkg/pantry-overlay):\n",
+			"rewritten by a person rather than piped (go-zpkg/recipes):\n",
 			len(notHCL), len(projects), hclRecipeName)
 		fmt.Fprintln(stderr, strings.Join(notHCL, "\n"))
 	}
@@ -473,7 +473,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// No ceiling either, for the reason given where the flag is declared: the
-	// tree this was written for reports zero once go-zpkg/pantry-overlay#138
+	// tree this was written for reports zero once go-zpkg/recipes#138
 	// is in.
 	if len(unknownEnv) > 0 {
 		return 1
@@ -516,7 +516,7 @@ var signatureExts = []string{".sig", ".asc", ".sign"}
 // and a checksum file that cannot be READ is a build failure on purpose
 // (runner.go:746-749). gnu.org/gzip, gnu.org/grep and gnu.org/bash each carried
 // one, bash being a base-toolchain member, and the lane stayed green because
-// linting does not fetch (go-zpkg/pantry-overlay#89).
+// linting does not fetch (go-zpkg/recipes#89).
 //
 // The author's error was not careless: `zpkb sourcepin` PRINTED a `sig = …` line
 // under the `sha256` block it offers for pasting, and `sig` is read by nothing
@@ -548,7 +548,7 @@ func shaNamesASignature(distributable any) string {
 // `$$NAME` is not excluded here and does not need to be: by the time a script
 // reaches this check, HCL has already turned `$${` into `${`, so what is read
 // is what the shell will read. That escape is a recipe-authoring concern
-// (go-zpkg/pantry-overlay#131), not a shell one.
+// (go-zpkg/recipes#131), not a shell one.
 var envRefRE = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
 
 // envAssignRE matches a name the script ASSIGNS itself, in either spelling a

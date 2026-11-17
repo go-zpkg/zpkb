@@ -165,7 +165,7 @@ func installVenvLaunch(prefix, venv string, names []string) error {
 // the single fact the three deleted stubs existed to repair, at run time, on
 // every invocation of every packaged tool. A relative link survives the store
 // moving as a unit, exactly as `@loader_path/../../..` already does for our
-// rpaths (go-zpkg/pantry-overlay#28), and it is written once, here, in the
+// rpaths (go-zpkg/recipes#28), and it is written once, here, in the
 // build sandbox: no lock, no race, no NFS restriction, no rewritten file inside
 // a signed artifact.
 //

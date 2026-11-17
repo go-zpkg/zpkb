@@ -198,7 +198,7 @@ func pinSigned(url, sig, keyFile, keySource, fingerprint, version string, stdout
 	// and an unreadable checksum file is a build failure by design
 	// (build/runner.go:746-749). All three would have failed at the fetch, and
 	// `zpkb lint` cannot see it because linting does not fetch
-	// (go-zpkg/pantry-overlay#89 removed them).
+	// (go-zpkg/recipes#89 removed them).
 	//
 	// So it is printed as a COMMENT, which cannot be pasted as a field, and it
 	// says where the URL does belong. When #282 gives the signature a field this

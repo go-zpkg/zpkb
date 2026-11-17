@@ -131,7 +131,7 @@ func publishedVersions(path, osn, arch string) (map[string][]string, error) {
 // ⛔⛔ A TOLERANT SKIP MUST SAY HOW OFTEN IT FIRED. The skip below was written
 // so that one malformed recipe could not stop a sweep — correct, and then HCL2
 // became the default format and every `package.hcl` took the same branch. This
-// walk examined 3 of pantry-overlay's 213 recipes and printed a clean,
+// walk examined 3 of the recipes tree's 213 recipes and printed a clean,
 // confident, silent result for the other 210 (go-zpkg/bk#389).
 //
 // The parse is fixed. The silence is the other half: a skip nobody counts

@@ -78,7 +78,7 @@ func TestExportedNamesCoversEveryExport(t *testing.T) {
 }
 
 // TestExportedNamesHoldsTheLiveSpellingAndNotTheDeadOne is the pair from
-// go-zpkg/pantry-overlay#138: the kernel recipe passed
+// go-zpkg/recipes#138: the kernel recipe passed
 // `CC="$ZBK_CC_FREESTANDING"` to make while the builder exports
 // `ZPKB_CC_FREESTANDING`, so the kernel compiled with an empty CC.
 //
