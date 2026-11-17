@@ -21,6 +21,40 @@ jobs:
       - run: go vet ./...
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      # ⛔⛔ 42 DEAD ADDRESSES OF A REPOSITORY THAT WAS RENAMED UNDER US.
+      # go-zpkg/pantry-overlay is go-zpkg/recipes, and this tree cited the old
+      # name 45 times — issue numbers and A/B measurements, fixed in #497.
+      #
+      # ⛔ A DEAD ADDRESS HERE DOES NOT 404, WHICH IS WHY NOTHING CAUGHT IT.
+      # GitHub redirects a renamed repository, so `go-zpkg/pantry-overlay#138`
+      # still resolves today. It holds right up until somebody creates a
+      # repository of that name in that org, which would silently take every one
+      # of those references and point them at a stranger's issue 138.
+      #
+      # ⭐ ZERO, NOT A CEILING. Unlike lint's --max-fragments, these were never a
+      # judgement call: an issue number survived the rename, so each reference
+      # has exactly one right answer. The three --allow files are the TOMBSTONE
+      # that refuses the retired ZPKG_PANTRY* names — the old repository is
+      # their SUBJECT, and rewriting them would make the tombstone describe
+      # nothing. Exemptions are counted and printed, never silent.
+      #
+      # ⛔ --ext go IS LOAD-BEARING. staleref's default set is documentation
+      # only, and 37 of the 45 were in Go comments: without this flag the run
+      # reads 9 files here, reports 8 findings and calls the other 306 clean.
+      # Its own --help says exactly that and it still fooled a reader who had
+      # read it, which is why fleettools now prints "N of M file(s) read" with a
+      # census of what it walked past.
+      #
+      # Pinned to v0.130.0, the release that exists. fleettools#337 (the report
+      # cut mid-rune, so grep refused it) is merged and unreleased; that costs
+      # nothing while this is green and makes the output hard to read the day it
+      # fires, so the pin rises to the release carrying it.
+      - name: nothing still points at go-zpkg/pantry-overlay
+        run: >
+          go run github.com/go-fleettools/fleettools/cmd/staleref@v0.130.0
+          --old pantry-overlay --new recipes --ext go
+          --allow cmd/zpkb/main.go --allow cmd/zpkb/main_test.go
+          --allow config/retired.go .
       # -race, because a concurrency guard that cannot fire is not a guard.
       # tailWriter took a whole darwin/x86-64 factory run down with
       #   panic: runtime error: slice bounds out of range [43:0]
