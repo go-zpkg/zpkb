@@ -84,7 +84,14 @@ const (
 func Hash(domain string, recs []*pantry.Recipe, proj, version string, tgt target.Target, depIDs []string) (string, error) {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n", domain)
-	fmt.Fprintf(h, "platform %s/%s\n", tgt.Platform, tgt.Arch)
+	// ⛔ Slug(), NOT Platform+"/"+Arch, AND THE TWO ARE BYTE-IDENTICAL TODAY.
+	// An unnamed libc spells exactly what this line spelled before, so every
+	// lock file in existence still verifies — TestTheLockSpecHashIsTheValueLockFilesHold
+	// holds the literal that proves it. A NAMED libc changes the hash, which is
+	// the entire point: a glibc closure and a musl closure are not the same
+	// resolved world, and a lock that could not tell them apart would pin a
+	// closure two different builds both satisfy.
+	fmt.Fprintf(h, "platform %s\n", tgt.Slug())
 	fmt.Fprintf(h, "project %s\n", proj)
 	fmt.Fprintf(h, "version %s\n", version)
 	if err := hashRecipes(h, recs, proj); err != nil {

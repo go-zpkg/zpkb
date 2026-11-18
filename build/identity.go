@@ -47,7 +47,15 @@ func concreteOf(recipe *pantry.Recipe, tgt target.Target, deps []moustache.Dep) 
 		return artifact.Concrete{}, err
 	}
 	c := artifact.Concrete{
-		Platform: tgt.Platform + "/" + tgt.Arch,
+		// ⛔⛔ THIS IS THE PUBLISHED ABI KEY, so it is the one site where a
+		// missing libc is unrecoverable. `artifact.VerifySpec` recomputes this
+		// from the manifest, so whatever is omitted here is omitted from what a
+		// consumer is able to check: a bottle built against musl and one built
+		// against glibc would carry the SAME Platform and hash alike, and the
+		// mixed closure go-zpkg/packages#225 exists to prevent would verify.
+		// Slug() is byte-identical while the libc is unnamed, so nothing
+		// already published changes identity.
+		Platform: tgt.Slug(),
 		Recipe:   dig,
 	}
 	for _, d := range deps {

@@ -141,9 +141,11 @@ func runSource(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
 	}
-	refs, err := sourceAttestations(*dist, project, ver, tgt.Platform, tgt.Arch)
+	// OSDir: an attestation is fetched from the published path, which carries
+	// the libc.
+	refs, err := sourceAttestations(*dist, project, ver, tgt.OSDir(), tgt.Arch)
 	if err != nil {
-		fmt.Fprintf(stderr, "error: %s %s (%s/%s): %v\n", project, ver, tgt.Platform, tgt.Arch, err)
+		fmt.Fprintf(stderr, "error: %s %s (%s): %v\n", project, ver, tgt.Slug(), err)
 		return 1
 	}
 	srcs, err := sourcesAttestedBy(refs)

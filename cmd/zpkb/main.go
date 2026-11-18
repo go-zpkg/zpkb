@@ -235,7 +235,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "error:", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "%s/%s triple=%s cross=%v\n", tgt.Platform, tgt.Arch, tgt.Triple, tgt.Cross())
+		// Slug, so `zpkb target` names the libc when one was asked for. This is
+		// the line an operator reads to find out what a run is about to build,
+		// and it is the cheapest place for a wrong ZPKB_TARGET to be caught.
+		fmt.Fprintf(stdout, "%s triple=%s cross=%v\n", tgt.Slug(), tgt.Triple, tgt.Cross())
 		return 0
 	case "fixup":
 		if len(rest) < 2 {

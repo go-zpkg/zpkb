@@ -91,6 +91,15 @@ type Target struct {
 }
 
 // Cross reports whether Platform/Arch differ from the running host.
+//
+// ⚠ THE LIBC IS DELIBERATELY NOT PART OF THIS COMPARISON, and the reason is
+// that it could not be an honest one: Host() leaves Libc empty because nothing
+// looks at the host's C library, so comparing the field would make EVERY named
+// libc "cross" — including a musl build on a musl machine. Cross() turns on
+// cross-compilation machinery, so a wrong `true` is not a cosmetic answer.
+//
+// When Host() learns to detect the libc (go-zpkg/packages#475), this is the
+// second place to revisit, after Triple.
 func (t Target) Cross() bool {
 	h := Host()
 	return t.Platform != h.Platform || t.Arch != h.Arch
@@ -110,11 +119,26 @@ func (t Target) Cross() bool {
 // on that path. Making them distinct needs Host() to know which libc it is on,
 // which is go-zpkg/packages#475's later work. This function makes the
 // distinction WRITABLE; it does not yet make it automatic.
-func (t Target) Slug() string {
+func (t Target) Slug() string { return t.OSDir() + "/" + t.Arch }
+
+// OSDir is the OS half of Slug on its own: "linux", or "linux-musl" when a libc
+// was named.
+//
+// ⛔ IT EXISTS BECAUSE THE TARGET IS SPELLED INTO A PATH IN MORE THAN ONE
+// PLACE, and before this there were five independent concatenations of
+// Platform and Arch — the artifact directory, the published identity, the lock
+// spec hash, the local build tree and the line printed to the operator. Five
+// copies of a rule is five chances for one of them to be the only one that
+// forgets the libc, and the one that forgets is not detectable by reading: it
+// shows up as two different builds agreeing on a hash they should differ on.
+//
+// Separators differ between the callers — "/" for the artifact path, "+" for
+// the build tree — so what is shared is this component and not the join.
+func (t Target) OSDir() string {
 	if t.Libc == "" {
-		return t.Platform + "/" + t.Arch
+		return t.Platform
 	}
-	return t.Platform + "-" + t.Libc + "/" + t.Arch
+	return t.Platform + "-" + t.Libc
 }
 
 var (
