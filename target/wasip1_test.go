@@ -31,7 +31,7 @@ func TestWasip1Target(t *testing.T) {
 func TestWasmIsAnArchOfWasip1Only(t *testing.T) {
 	for _, bad := range []string{"linux/wasm", "darwin/wasm", "windows/wasm", "wasip1/x86-64", "wasip1/aarch64", "wasip1/s390x"} {
 		t.Setenv("ZPKB_TARGET", bad)
-		if _, _, _, err := Override(); err == nil {
+		if _, _, _, _, err := Override(); err == nil {
 			t.Errorf("%s accepted", bad)
 		} else if !strings.Contains(err.Error(), "unsupported target arch") {
 			t.Errorf("%s: %v", bad, err)
@@ -39,7 +39,7 @@ func TestWasmIsAnArchOfWasip1Only(t *testing.T) {
 	}
 	for _, good := range []string{"linux/x86-64", "linux/s390x", "windows/aarch64", "darwin/aarch64", "wasip1/wasm"} {
 		t.Setenv("ZPKB_TARGET", good)
-		if _, _, ok, err := Override(); err != nil || !ok {
+		if _, _, _, ok, err := Override(); err != nil || !ok {
 			t.Errorf("%s refused: %v", good, err)
 		}
 	}

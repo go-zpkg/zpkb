@@ -53,7 +53,7 @@ func TestNativeTripleAllOS(t *testing.T) {
 
 func TestOverrideUnset(t *testing.T) {
 	t.Setenv("ZPKB_TARGET", "")
-	_, _, ok, err := Override()
+	_, _, _, ok, err := Override()
 	if ok || err != nil {
 		t.Errorf("unset: ok=%v err=%v", ok, err)
 	}
@@ -84,7 +84,7 @@ func TestTheOldVariableNameIsNotRead(t *testing.T) {
 	t.Setenv("ZPKB_TARGET", "")
 	t.Setenv("BREWKIT_TARGET", "windows/x86-64")
 
-	_, _, ok, err := Override()
+	_, _, _, ok, err := Override()
 	if err != nil {
 		t.Fatalf("Override errored on the old name: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestTheOldVariableNameIsNotRead(t *testing.T) {
 func TestOverrideWindows(t *testing.T) {
 	for _, raw := range []string{"windows/x86-64", "windows+x86-64"} {
 		t.Setenv("ZPKB_TARGET", raw)
-		p, a, ok, err := Override()
+		p, a, _, ok, err := Override()
 		if !ok || err != nil || p != "windows" || a != "x86-64" {
 			t.Fatalf("%q → %q %q ok=%v err=%v", raw, p, a, ok, err)
 		}
@@ -152,7 +152,7 @@ func TestOverrideNonWindowsTripleFallsBackToNative(t *testing.T) {
 func TestOverrideErrors(t *testing.T) {
 	for _, bad := range []string{"garbage", "windows-x86-64", "plan9/x86-64", "windows/sparc"} {
 		t.Setenv("ZPKB_TARGET", bad)
-		if _, _, _, err := Override(); err == nil {
+		if _, _, _, _, err := Override(); err == nil {
 			t.Errorf("%q: expected error", bad)
 		}
 		if _, err := Resolve(); err == nil {
@@ -187,7 +187,7 @@ func TestOverrideS390x(t *testing.T) {
 func TestOverrideGoSpellingIsDiagnosed(t *testing.T) {
 	for goName, zpkgName := range map[string]string{"amd64": "x86-64", "arm64": "aarch64"} {
 		t.Setenv("ZPKB_TARGET", "linux/"+goName)
-		_, _, _, err := Override()
+		_, _, _, _, err := Override()
 		if err == nil {
 			t.Fatalf("Override() accepted linux/%s", goName)
 		}
