@@ -153,7 +153,13 @@ to `v1.2.3-hhhrjzyh2dk56y7tc`: the container's own glibc, the artifact, and the
 artifact pinned to 2.27.0. One identity for three ABIs, on the flag whose whole
 purpose is to choose an ABI. It is recorded as an ordinary entry in
 `Concrete.Deps`, so `artifact.VerifySpec` is unchanged and a consumer
-recomputing the hash from the manifest now sees the libc listed. ⚠ With no
+recomputing the hash from the manifest now sees the libc listed. ⛔ And the
+project recorded follows **the target's libc** — `musl.libc.org` for a
+`linux-musl/…` target, `gnu.org/glibc` otherwise — from one table in `target`.
+Writing the literal instead made a musl build record a glibc dependency, which
+is worse than recording nothing: the manifest and the hash agree with each
+other and both are wrong about the ABI, so the bottle VERIFIES. A libc with no
+project is a refusal, never a dropped field. ⚠ With no
 `--glibc`, the version is left EMPTY, because "newest at eval time" is not
 knowable before the compiler runs and the identity must be: two `--libc=zpkx`
 builds either side of a glibc release still share one. That edge degrades to

@@ -79,11 +79,30 @@ type libcChoice struct {
 // none. ⛔ NOT ON darwin/windows/wasip1: wrapper.go injects the glibc only
 // under `o.LibcZpkx && o.Target.Platform == "linux"`, so recording it anywhere
 // else would make the identity claim a link that never happened.
-func (l libcChoice) libcDep(tgt target.Target) (artifact.Dep, bool) {
+//
+// ⛔⛔ THE PROJECT COMES FROM THE TARGET'S LIBC, NOT FROM A LITERAL, and this
+// fixes a defect the two halves created between them. go-zpkg/zpkb#502 made
+// `ZPKB_TARGET=linux-musl/x86-64` expressible; go-zpkg/zpkb#504 made the libc
+// choice part of the identity — by writing the string "gnu.org/glibc". So a
+// musl target recorded a GLIBC dependency, and because `artifact.VerifySpec`
+// recomputes the hash from that same manifest, the bottle would have VERIFIED
+// while its own record was wrong about its ABI. A false record is worse than
+// an absent one: the absent one is visibly absent.
+//
+// ⚠ A libc with no project is an ERROR rather than an omission. Returning
+// false here would silently drop the libc from the identity — which is the
+// state go-zpkg/zpkb#504 existed to end — so an unknown name travels as an
+// error to the caller instead.
+func (l libcChoice) libcDep(tgt target.Target) (artifact.Dep, bool, error) {
 	if l.Mode != "zpkx" || tgt.Platform != "linux" {
-		return artifact.Dep{}, false
+		return artifact.Dep{}, false, nil
 	}
-	return artifact.Dep{Project: "gnu.org/glibc", Version: l.Version}, true
+	proj, ok := target.LibcProject(tgt.Libc)
+	if !ok {
+		return artifact.Dep{}, false, fmt.Errorf(
+			"no project provides libc %q, so this build cannot record what it linked against", tgt.Libc)
+	}
+	return artifact.Dep{Project: proj, Version: l.Version}, true, nil
 }
 
 func concreteOf(recipe *pantry.Recipe, tgt target.Target, deps []moustache.Dep, libc libcChoice) (artifact.Concrete, error) {
@@ -115,7 +134,11 @@ func concreteOf(recipe *pantry.Recipe, tgt target.Target, deps []moustache.Dep, 
 	// gnu.org/glibc itself would then contribute two entries — correct, and
 	// visibly so: one is the recipe's own edge with a resolved prefix, the
 	// other is the toolchain's with none.
-	if d, ok := libc.libcDep(tgt); ok {
+	d, ok, err := libc.libcDep(tgt)
+	if err != nil {
+		return artifact.Concrete{}, err
+	}
+	if ok {
 		c.Deps = append(c.Deps, d)
 	}
 	// Sorted, because this comes from walking a map and a hash that depended

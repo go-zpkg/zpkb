@@ -137,6 +137,50 @@ func TestOSDirIsTheOSHalfOfTheSlug(t *testing.T) {
 	}
 }
 
+// ⛔ LibcProject IS EXERCISED HERE AND NOT ONLY FROM `build`. Its only caller
+// is in another package, so the coverage gate — which is per package — saw
+// 0.0% and went red. That is the gate working: an exported function whose own
+// package never calls it is a function whose contract nothing local pins, and
+// the contract here is the second return value.
+func TestLibcProjectNamesAProjectOrRefuses(t *testing.T) {
+	for _, tc := range []struct{ libc, want string }{
+		{"", "gnu.org/glibc"},
+		{"gnu", "gnu.org/glibc"},
+		{"musl", "musl.libc.org"},
+	} {
+		got, ok := LibcProject(tc.libc)
+		if !ok || got != tc.want {
+			t.Errorf("LibcProject(%q) = %q, %v; want %q, true", tc.libc, got, ok, tc.want)
+		}
+	}
+	// ⛔ AND THE MISS RETURNS false WITH AN EMPTY STRING, never a plausible
+	// project. bionic is in the table's own comment as deliberately absent, so
+	// it is the honest probe: a caller that wrote "" into a published
+	// dependency would publish a dependency on a project called "".
+	for _, bad := range []string{"bionic", "uclibc", "llvm", "GNU"} {
+		if got, ok := LibcProject(bad); ok || got != "" {
+			t.Errorf("LibcProject(%q) = %q, %v; want \"\", false", bad, got, ok)
+		}
+	}
+}
+
+// ⭐ AND EVERY LIBC THE TABLES ACCEPT MUST HAVE A PROJECT. The two tables are
+// written apart — `platformLibcs` says what a target may NAME, `libcProjects`
+// says what provides it — so a name added to one and not the other would be
+// accepted by Override() and then refused at identity time, which is a failure
+// after the build rather than before it.
+func TestEveryAcceptedLibcHasAProject(t *testing.T) {
+	for _, p := range libcPlatforms() {
+		for _, l := range Libcs(p) {
+			if _, ok := LibcProject(l); !ok {
+				t.Errorf("%s accepts libc %q, but no project provides it", p, l)
+			}
+		}
+	}
+	// The other direction is NOT asserted: `libcProjects` carries "" for the
+	// unnamed case, which is not a name any platform lists.
+}
+
 func TestIsLibcAndLibcs(t *testing.T) {
 	if !IsLibc("linux", "") || !IsLibc("darwin", "") {
 		t.Error("an unnamed libc must be valid everywhere")

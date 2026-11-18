@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-zpkg/artifact"
 	"github.com/go-zpkg/zpkb/target"
 )
 
@@ -109,6 +110,62 @@ func TestTheRecordedLibcNamesTheProjectAndThePin(t *testing.T) {
 			t.Errorf("pin %q recorded a hash (%q); nothing resolved this edge to a prefix",
 				tc.pin, c.Deps[0].Hash)
 		}
+	}
+}
+
+// ⛔⛔ A musl TARGET MUST NOT RECORD A GLIBC DEPENDENCY, and until this test
+// existed it did. go-zpkg/zpkb#502 made `linux-musl/x86-64` expressible and
+// go-zpkg/zpkb#504 put the libc in the identity — by writing the literal
+// "gnu.org/glibc". The two were correct apart and wrong together: the bottle
+// would carry a manifest naming glibc, `artifact.VerifySpec` would recompute
+// the hash from that same manifest, and it would VERIFY. A record that is
+// wrong and self-consistent is worse than one that is missing.
+func TestAMuslTargetRecordsMuslAndNotGlibc(t *testing.T) {
+	for _, tc := range []struct{ libc, want string }{
+		{"musl", "musl.libc.org"},
+		{"gnu", "gnu.org/glibc"},
+		// The control: an unnamed libc is every build published so far, and the
+		// sovereign mode it is paired with exists to target the glibc artifact.
+		{"", "gnu.org/glibc"},
+	} {
+		tgt := target.Target{Platform: "linux", Arch: "x86-64", Libc: tc.libc}
+		c, err := concreteOf(idRecipe(), tgt, nil, libcChoice{Mode: "zpkx"})
+		if err != nil {
+			t.Fatalf("libc %q: %v", tc.libc, err)
+		}
+		if len(c.Deps) != 1 || c.Deps[0].Project != tc.want {
+			t.Errorf("libc %q → %+v, want one dep on %s", tc.libc, c.Deps, tc.want)
+		}
+	}
+}
+
+// ⭐ THE TWO DEFINITIONS OF THE GLIBC PROJECT STRING MUST AGREE, and nothing
+// else can say so: `target` holds the libc→project table and `artifact` holds
+// `GlibcProject`, in different modules, with no import between them. A silent
+// divergence would send the identity's dependency and the loader search to two
+// different project directories — judge and subject counting differently.
+func TestTheTwoGlibcProjectStringsAgree(t *testing.T) {
+	got, ok := target.LibcProject("gnu")
+	if !ok {
+		t.Fatal(`target.LibcProject("gnu") reports no project`)
+	}
+	if got != artifact.GlibcProject {
+		t.Errorf("target says %q, artifact.GlibcProject says %q", got, artifact.GlibcProject)
+	}
+}
+
+// ⚠ AN UNKNOWN LIBC IS AN ERROR, NOT A DROPPED FIELD. Returning "no dep" for a
+// name with no project would put the build back in the state #504 ended —
+// linking one libc and recording nothing — and it would do it silently, which
+// is the worse half.
+func TestAnUnnameableLibcRefusesRatherThanRecordingNothing(t *testing.T) {
+	tgt := target.Target{Platform: "linux", Arch: "x86-64", Libc: "bionic"}
+	_, err := concreteOf(idRecipe(), tgt, nil, libcChoice{Mode: "zpkx"})
+	if err == nil {
+		t.Fatal("a libc with no project was accepted, and the identity recorded nothing")
+	}
+	if !strings.Contains(err.Error(), "bionic") {
+		t.Errorf("error = %v; want it to name the libc", err)
 	}
 }
 

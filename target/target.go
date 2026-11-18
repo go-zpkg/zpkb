@@ -203,8 +203,61 @@ var (
 	// would let `ZPKB_TARGET=linux-bionic/aarch64` be accepted by a factory
 	// that cannot build it — the asymmetry platformArches' own comment records
 	// s390x having had.
+	//
+	// ⭐ THE CENSUS BEHIND THE TWO ENTRIES, so the question is not re-derived.
+	// Asked on 2026-11-18: are there other libcs on linux or the BSDs we should
+	// carry? Measured against each project's own pages rather than from memory:
+	//
+	//	llvm-libc    the only plausible third, and the natural pairing since our
+	//	             toolchain IS llvm.org — but libc.llvm.org names its linux
+	//	             use case as "Static-linked Linux servers and containers"
+	//	             (x86-64, AArch64) and warns that "many programs that depend
+	//	             on the full C standard library" do not compile yet.
+	//	             ⛔ STATIC-ONLY IS DISQUALIFYING HERE, not merely limiting:
+	//	             we publish relocatable bottles with a dynamic loader and an
+	//	             rpath rewrite, so a libc with no dynamic linker cannot root
+	//	             a closure. That is a disagreement about what an artifact is,
+	//	             not a maturity gap that waiting fixes.
+	//	uClibc-ng    alive and shipping (1.0.57-1.0.59 during 2026; Buildroot and
+	//	             Bootlin carry it), but its reason to exist is the arches and
+	//	             size envelopes musl does not serve — ARC, Xtensa, nommu m68k.
+	//	             On x86-64, aarch64 and s390x it buys nothing musl lacks.
+	//	dietlibc     unmaintained.
+	//	newlib,      bare-metal / embedded: no process model to host our closure.
+	//	picolibc
+	//	cosmopolitan an ABI trick over existing libcs, not a root.
+	//	relibc       Redox's, not a linux system libc.
+	//
+	// ⛔⛔ AND THE BSDs HAVE NO SUCH AXIS AT ALL, which is why there is no
+	// freebsd/openbsd/netbsd key here and why that is correct by construction
+	// rather than by omission. "Which libc" only has several answers where the
+	// kernel ABI is stable and public: linux guarantees syscall stability, so
+	// independent libcs can compete for one target. The BSDs ship libc inside
+	// the base system, built and versioned with the kernel as one world — which
+	// is precisely what lets them change the syscall layer between releases.
+	// And concretely for us: we build for the BSDs only inside the
+	// `vmactions/*-vm` qemu guests, linking the guest's own libc. This factory
+	// never SUPPLIES a libc to a BSD target, so there is nothing to choose.
 	platformLibcs = map[string]map[string]bool{
 		"linux": {"gnu": true, "musl": true},
+	}
+	// libcProjects maps a libc NAME to the project that provides it.
+	//
+	// ⛔⛔ ONE TABLE, BECAUSE THE WRONG ONE IS A FALSE RECORD RATHER THAN A
+	// BUILD FAILURE. The build identity names the libc it linked against
+	// (go-zpkg/zpkb#504), and `artifact.VerifySpec` lets a consumer recompute
+	// it — so a musl target that recorded `gnu.org/glibc` would publish a
+	// bottle whose own manifest lies about its ABI, and verify.
+	//
+	// ⚠ An UNNAMED libc maps to glibc here and only here, and that is not the
+	// "default" Host() refuses to invent: this table is consulted only once a
+	// build has ALREADY chosen the sovereign libc mode, which exists to target
+	// the gnu.org/glibc artifact. The unnamed case is "the mode's own libc",
+	// not a guess about the host.
+	libcProjects = map[string]string{
+		"":     "gnu.org/glibc",
+		"gnu":  "gnu.org/glibc",
+		"musl": "musl.libc.org",
 	}
 	// overrideRE accepts an optional libc on the platform component:
 	// `linux/x86-64`, `linux-musl/x86-64`, `linux-musl+x86-64`.
@@ -230,6 +283,18 @@ func Libcs(platform string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// LibcProject names the project that provides a libc, and reports false for a
+// name this factory has no recipe for.
+//
+// ⛔ IT RETURNS A SECOND VALUE RATHER THAN AN EMPTY STRING, because an empty
+// project would travel: it would be written into a Concrete.Dep and published
+// as a dependency on a project called "". A caller that cannot name the libc
+// must find out here, not three layers down.
+func LibcProject(libc string) (string, bool) {
+	p, ok := libcProjects[libc]
+	return p, ok
 }
 
 // wasip1Triple is the LLVM name of the Go wasip1/wasm target (Go's GOOS=wasip1
