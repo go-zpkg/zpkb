@@ -148,7 +148,12 @@ func Compute(project, version, hash string, tgt target.Target) Paths {
 	}
 
 	dh := filepath.Join(dataHome(), buildTreeDir)
-	root := filepath.Join(dh, tgt.Platform+"+"+tgt.Arch, filepath.FromSlash(project), "v"+version)
+	// OSDir, so that a glibc and a musl build of the same project at the same
+	// version do not share a source tree, a build directory and a testbed. The
+	// separator stays "+" — this is a directory NAME, not a path — and an
+	// unnamed libc spells what it spelled before, so no existing build tree
+	// is orphaned.
+	root := filepath.Join(dh, tgt.OSDir()+"+"+tgt.Arch, filepath.FromSlash(project), "v"+version)
 	p.Root = dh
 	p.Home = root
 	p.Src = filepath.Join(root, "src")

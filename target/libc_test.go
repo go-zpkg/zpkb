@@ -113,6 +113,30 @@ func TestHostNamesNoLibc(t *testing.T) {
 	}
 }
 
+// ⛔ OSDir AND Slug MUST NOT BE TWO RULES. Five call sites spell the target
+// into a path or an identity, and they are only consistent because they share
+// this one component; a Slug that stopped agreeing with OSDir would make the
+// artifact path and the published identity disagree about the same build.
+func TestOSDirIsTheOSHalfOfTheSlug(t *testing.T) {
+	for _, tgt := range []Target{
+		{Platform: "linux", Arch: "x86-64"},
+		{Platform: "linux", Arch: "x86-64", Libc: "musl"},
+		{Platform: "linux", Arch: "aarch64", Libc: "gnu"},
+		{Platform: "darwin", Arch: "aarch64"},
+		{Platform: "wasip1", Arch: "wasm"},
+	} {
+		if got, want := tgt.Slug(), tgt.OSDir()+"/"+tgt.Arch; got != want {
+			t.Errorf("Slug() = %q but OSDir()+/+Arch = %q", got, want)
+		}
+	}
+	if got := (Target{Platform: "linux", Arch: "x86-64"}).OSDir(); got != "linux" {
+		t.Errorf("OSDir() = %q, want linux — an unnamed libc adds nothing", got)
+	}
+	if got := (Target{Platform: "linux", Arch: "x86-64", Libc: "musl"}).OSDir(); got != "linux-musl" {
+		t.Errorf("OSDir() = %q, want linux-musl", got)
+	}
+}
+
 func TestIsLibcAndLibcs(t *testing.T) {
 	if !IsLibc("linux", "") || !IsLibc("darwin", "") {
 		t.Error("an unnamed libc must be valid everywhere")

@@ -149,6 +149,14 @@ func normalise(hdr *tar.Header, fi fs.FileInfo) {
 // WriteArtifact creates "outDir/<project>/<os>/<arch>/v<version>.tar.gz",
 // artifacts installDir into it, and appends version to the sibling
 // "versions.txt". It returns the tarball path.
+//
+// ⚠ `os` IS THE TARGET'S OS DIRECTORY, NOT NECESSARILY ITS PLATFORM. Callers
+// pass target.Target.OSDir(), which is "linux" or "linux-musl": the libc is
+// part of where a bottle lands, because two bottles of the same project and
+// version built against different C libraries are not interchangeable and must
+// not share a path. This function is given the component already decided
+// rather than a Target, so that the one rule lives in `target` and this
+// package keeps no opinion about it.
 func WriteArtifact(installDir, project, version, os, arch, outDir string) (string, error) {
 	dir := filepath.Join(outDir, project, os, arch)
 	if err := osMkdirAll(dir, 0o755); err != nil {

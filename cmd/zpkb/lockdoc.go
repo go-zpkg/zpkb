@@ -88,9 +88,12 @@ func resolveLock(set *logical.Set, overlayDir, pantryDir string, tgt target.Targ
 			// in a runnable lock, not a pin to quietly leave at the recipe's
 			// version: the whole promise of the mode is that `zpkx --lock`
 			// can install every line.
-			pv, perr := publishedVersionFor(proj, demands[proj], tgt.Platform, tgt.Arch)
+			// OSDir, because this asks the registry for a path, and the path
+			// carries the libc. Asking under "linux" for a musl lock would
+			// resolve to glibc bottles and call the lock runnable.
+			pv, perr := publishedVersionFor(proj, demands[proj], tgt.OSDir(), tgt.Arch)
 			if perr != nil {
-				unresolved = append(unresolved, fmt.Sprintf("%s (nothing published for %s/%s: %v)", proj, tgt.Platform, tgt.Arch, perr))
+				unresolved = append(unresolved, fmt.Sprintf("%s (nothing published for %s: %v)", proj, tgt.Slug(), perr))
 				continue
 			}
 			v = pv

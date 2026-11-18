@@ -561,7 +561,10 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 
 	// package
 	if distOut != "" {
-		p, err := r.WriteArtifact(paths.Install, project, version, tgt.Platform, tgt.Arch, distOut)
+		// OSDir rather than Platform: the libc belongs in the artifact path, or
+		// a glibc bottle and a musl bottle of the same version overwrite each
+		// other and the survivor says nothing about which it is.
+		p, err := r.WriteArtifact(paths.Install, project, version, tgt.OSDir(), tgt.Arch, distOut)
 		if err != nil {
 			return res, fmt.Errorf("package: %w", err)
 		}
