@@ -56,6 +56,38 @@ type Target struct {
 	// Changing it before then is a fix to a case that cannot arise, and the
 	// test below pins the current answer deliberately.
 	Triple string
+
+	// Libc names the C library a linux target is built against: "gnu", "musl".
+	// It is EMPTY everywhere else, and empty on linux means "whatever the host
+	// has, unrecorded" — which is this factory's actual state and not a
+	// default standing in for one.
+	//
+	// ⛔ THE FIELD EXISTS BECAUSE THE LIBC WAS NOT IN THE GRAPH AT ALL.
+	// Measured 2026-11-18 over go-zpkg/recipes' 247 recipes: exactly ONE names
+	// a libc — go-zpkg/base-toolchain, as `"gnu.org/glibc" = "*"`, with no
+	// version constraint — and no ordinary recipe names one. The libc arrived
+	// because the base toolchain is prepended, so there was no edge to vary
+	// and several libcs were not expressible (go-zpkg/packages#475).
+	//
+	// ⚠ A LIBC IS NOT AN ORDINARY DEPENDENCY, which is why it lives here and
+	// not in a recipe. Every object in a closure must agree on it: a bottle
+	// built against musl cannot be loaded beside one built against glibc. So
+	// it is part of the target's IDENTITY, as in Rust's
+	// x86_64-unknown-linux-musl beside -gnu, Zig's triples, and Alpine against
+	// Debian — every system that ships binaries puts it in the name, because
+	// the artifacts are not interchangeable. Modelling it as a dependency to
+	// be solved (Spack's virtual providers) suits a from-source, per-site
+	// builder and not a publisher of bottles: a mixed closure is not a
+	// resolution error to report, it is an artifact that cannot exist.
+	//
+	// ⛔ AND THIS FIELD ALONE DOES NOT RECORD WHAT A NATIVE BUILD USED. Host()
+	// leaves it empty rather than answering "gnu", because nothing here has
+	// looked: that would be an assumption wearing a measurement's clothes, and
+	// a native build on a musl machine would then publish a bottle labelled
+	// gnu. Detecting the host's libc, and recording the answer on the bottle,
+	// is go-zpkg/packages#475's later work and go-zpkg/packages#225 step 5.
+	// What this field buys today is that the choice can be NAMED.
+	Libc string
 }
 
 // Cross reports whether Platform/Arch differ from the running host.
@@ -64,8 +96,26 @@ func (t Target) Cross() bool {
 	return t.Platform != h.Platform || t.Arch != h.Arch
 }
 
-// Slug is the pkgx artifact platform key, eg. "linux/x86-64".
-func (t Target) Slug() string { return t.Platform + "/" + t.Arch }
+// Slug is the artifact platform key, eg. "linux/x86-64", "linux-musl/x86-64".
+//
+// ⭐ THE LIBC APPEARS ONLY WHEN IT WAS NAMED, and that is a compatibility
+// decision rather than an oversight. Every artifact published so far lives at
+// `<project>/<os>/<arch>/…`; appending a libc component unconditionally would
+// move all of them, for a value no existing bottle records. An empty Libc
+// therefore spells exactly what it spells today, and a named one — the only
+// way to get a non-glibc build — spells itself.
+//
+// ⚠ The consequence, stated rather than discovered later: a native glibc build
+// and a native musl build both still produce "linux/x86-64" and would collide
+// on that path. Making them distinct needs Host() to know which libc it is on,
+// which is go-zpkg/packages#475's later work. This function makes the
+// distinction WRITABLE; it does not yet make it automatic.
+func (t Target) Slug() string {
+	if t.Libc == "" {
+		return t.Platform + "/" + t.Arch
+	}
+	return t.Platform + "-" + t.Libc + "/" + t.Arch
+}
 
 var (
 	// platformArches is the table of what bk can build FOR: platform -> arches.
@@ -113,8 +163,50 @@ var (
 		"x86-64":  "x86_64-w64-mingw32",
 		"aarch64": "aarch64-w64-mingw32",
 	}
-	overrideRE = regexp.MustCompile(`^([a-z0-9_]+)[/+]([a-z0-9-]+)$`)
+	// platformLibcs is what a platform's C library may be NAMED as. It exists
+	// for the same reason platformArches does: a value with no machine behind
+	// it is a guess, and this is one of the two places that must not hold one.
+	//
+	// ⛔ ONLY LINUX HAS AN ENTRY, and that is a fact about the other platforms
+	// rather than a gap here. darwin's libSystem, the three BSDs' libcs and
+	// windows' CRT are not choices a build makes — there is one per platform
+	// and naming it would add a component that can take exactly one value.
+	//
+	// ⛔ AND BIONIC IS DELIBERATELY ABSENT. Android's libc is reachable only
+	// through the NDK's toolchain and sysroot: it is a cross-compilation
+	// target, not a libc that can be swapped under a native build, so it needs
+	// the toolchain work before the name means anything. Adding it here now
+	// would let `ZPKB_TARGET=linux-bionic/aarch64` be accepted by a factory
+	// that cannot build it — the asymmetry platformArches' own comment records
+	// s390x having had.
+	platformLibcs = map[string]map[string]bool{
+		"linux": {"gnu": true, "musl": true},
+	}
+	// overrideRE accepts an optional libc on the platform component:
+	// `linux/x86-64`, `linux-musl/x86-64`, `linux-musl+x86-64`.
+	overrideRE = regexp.MustCompile(`^([a-z0-9_]+)(?:-([a-z0-9]+))?[/+]([a-z0-9-]+)$`)
 )
+
+// IsLibc reports whether platform/libc names a C library this factory can be
+// targeted at. An empty libc is always valid: it means "unnamed", which every
+// platform allows and which is what every target spelled today carries.
+func IsLibc(platform, libc string) bool {
+	if libc == "" {
+		return true
+	}
+	return platformLibcs[platform][libc]
+}
+
+// Libcs lists the C libraries a platform may name, sorted, for an error
+// message that must not restate the table.
+func Libcs(platform string) []string {
+	out := make([]string, 0, len(platformLibcs[platform]))
+	for l := range platformLibcs[platform] {
+		out = append(out, l)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // wasip1Triple is the LLVM name of the Go wasip1/wasm target (Go's GOOS=wasip1
 // GOARCH=wasm; WASI preview 1 on a 32-bit wasm machine).
@@ -253,18 +345,27 @@ func Host() Target {
 // own rename. Nothing in this organisation set it outside its own sources: the
 // only other mentions were two recipe comments, two READMEs and one docs page,
 // all updated with it.
-func Override() (platform, arch string, ok bool, err error) {
+func Override() (platform, arch, libc string, ok bool, err error) {
 	raw := strings.TrimSpace(os.Getenv("ZPKB_TARGET"))
 	if raw == "" {
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
 	m := overrideRE.FindStringSubmatch(raw)
 	if m == nil {
-		return "", "", false, fmt.Errorf("invalid ZPKB_TARGET: %q (expected eg. 'windows/x86-64')", raw)
+		return "", "", "", false, fmt.Errorf("invalid ZPKB_TARGET: %q (expected eg. 'windows/x86-64' or 'linux-musl/x86-64')", raw)
 	}
-	platform, arch = m[1], m[2]
+	platform, libc, arch = m[1], m[2], m[3]
 	if !IsPlatform(platform) {
-		return "", "", false, fmt.Errorf("unsupported target platform: %q", platform)
+		return "", "", "", false, fmt.Errorf("unsupported target platform: %q", platform)
+	}
+	// ⛔ ASKED BEFORE THE ARCH, so `linux-bionic/aarch64` is refused for the
+	// libc it names rather than passing because the arch is fine. A refusal
+	// that reports the wrong half sends the reader to the wrong file.
+	if !IsLibc(platform, libc) {
+		if len(platformLibcs[platform]) == 0 {
+			return "", "", "", false, fmt.Errorf("platform %q names no C library (only %s does)", platform, strings.Join(libcPlatforms(), ", "))
+		}
+		return "", "", "", false, fmt.Errorf("unsupported libc %q for platform %q (this factory builds %s)", libc, platform, strings.Join(Libcs(platform), ", "))
 	}
 	if !IsPair(platform, arch) {
 		// amd64 and arm64 are Go's spellings for two of these machines and the
@@ -272,22 +373,33 @@ func Override() (platform, arch string, ok bool, err error) {
 		// Refusing without saying so sends the reader looking for a missing
 		// port rather than at the two characters that differ.
 		if zpkx := zpkgArch(arch); zpkx != arch && IsPair(platform, zpkx) {
-			return "", "", false, fmt.Errorf("unsupported target arch: %q (pkgx spells it %q)", arch, zpkx)
+			return "", "", "", false, fmt.Errorf("unsupported target arch: %q (pkgx spells it %q)", arch, zpkx)
 		}
-		return "", "", false, fmt.Errorf("unsupported target arch %q for platform %q", arch, platform)
+		return "", "", "", false, fmt.Errorf("unsupported target arch %q for platform %q", arch, platform)
 	}
-	return platform, arch, true, nil
+	return platform, arch, libc, true, nil
+}
+
+// libcPlatforms lists the platforms that name a C library at all, read from
+// the table rather than restated.
+func libcPlatforms() []string {
+	out := make([]string, 0, len(platformLibcs))
+	for p := range platformLibcs {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // IsCross reports whether a ZPKB_TARGET override is set (a cross build).
 func IsCross() (bool, error) {
-	_, _, ok, err := Override()
+	_, _, _, ok, err := Override()
 	return ok, err
 }
 
 // Resolve returns the build target, falling back to Host() for native builds.
 func Resolve() (Target, error) {
-	platform, arch, ok, err := Override()
+	platform, arch, libc, ok, err := Override()
 	if err != nil {
 		return Target{}, err
 	}
@@ -312,7 +424,13 @@ func Resolve() (Target, error) {
 		}
 		triple = t
 	}
-	return Target{Platform: platform, Arch: arch, Triple: triple}, nil
+	// ⚠ THE TRIPLE IS NOT RECOMPUTED FROM THE LIBC, and that is deliberate
+	// while it stays the HOST's triple (see Target.Triple). A musl target
+	// needs `x86_64-unknown-linux-musl` there, and producing it means the
+	// unix→unix cross build the comment above says does not arise yet — the
+	// toolchain work in go-zpkg/packages#475. Writing it now would make the
+	// field claim a cross compiler this factory has not built.
+	return Target{Platform: platform, Arch: arch, Libc: libc, Triple: triple}, nil
 }
 
 // tripleArches lists the arches llvm-mingw can be targeted at, for the error
