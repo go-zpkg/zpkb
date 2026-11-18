@@ -145,6 +145,22 @@ output runs `FROM scratch`. `--glibc <version>` pins that sysroot to an exact
 glibc line, and `zpkb builder` stages the sovereign rootfs itself: static Go
 binaries plus toolchain artifacts from the signed registry, nothing else.
 
+⛔ **Both flags are RECORDED in the build's identity**, and until 2026-11-18
+neither was. They are per-run flags that append `"+gnu.org/glibc@<v>"` to the
+generated script's environment eval, which never passes through the recipe's
+dependencies — so three materially different builds of one recipe all hashed
+to `v1.2.3-hhhrjzyh2dk56y7tc`: the container's own glibc, the artifact, and the
+artifact pinned to 2.27.0. One identity for three ABIs, on the flag whose whole
+purpose is to choose an ABI. It is recorded as an ordinary entry in
+`Concrete.Deps`, so `artifact.VerifySpec` is unchanged and a consumer
+recomputing the hash from the manifest now sees the libc listed. ⚠ With no
+`--glibc`, the version is left EMPTY, because "newest at eval time" is not
+knowable before the compiler runs and the identity must be: two `--libc=zpkx`
+builds either side of a glibc release still share one. That edge degrades to
+*the artifact was used* and no further — stated, not hidden. ⚠ Builds that
+passed these flags get NEW hashes from here on; builds that did not are
+byte-identical to before.
+
 [`docs/from-scratch-toolchain.md`](docs/from-scratch-toolchain.md) is the design
 note behind it, kept because its hazard list is still the one that bites.
 

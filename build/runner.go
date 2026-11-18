@@ -250,7 +250,7 @@ func (r *Runner) Plan(recipe *pantry.Recipe, project, constraint string, tgt tar
 	// degrades to version-level precision for that edge and no further, and
 	// it repairs itself as the registry is rebuilt. Said plainly rather than
 	// hidden: a hash is only as sharp as what it is taken over.
-	c, err := concreteOf(recipe, tgt, p.BuildEnv)
+	c, err := concreteOf(recipe, tgt, p.BuildEnv, libcChoice{Mode: r.LibcMode, Version: r.Glibc})
 	if err != nil {
 		return p, fmt.Errorf("build identity: %w", err)
 	}

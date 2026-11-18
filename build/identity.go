@@ -41,7 +41,52 @@ import (
 // empty hash: that edge degrades to version-level precision and no further,
 // and it repairs itself as the registry is rebuilt. Said out loud rather than
 // hidden, because a hash is only as sharp as what it is taken over.
-func concreteOf(recipe *pantry.Recipe, tgt target.Target, deps []moustache.Dep) (artifact.Concrete, error) {
+// ⛔⛔ THE LIBC THE BUILD LINKS AGAINST IS AN ARGUMENT HERE BECAUSE IT IS NOT
+// IN `deps`. `--libc zpkx` and `--glibc <v>` are per-run FLAGS: they append
+// `"+gnu.org/glibc@<v>"` to the generated script's environment eval
+// (buildscript/wrapper.go), which never passes through `recipe.Dependencies`
+// and so never reaches `DepTokens`. MEASURED on 2026-11-18, three materially
+// different builds of one recipe:
+//
+//	system libc     v1.2.3-hhhrjzyh2dk56y7tc
+//	zpkx libc       v1.2.3-hhhrjzyh2dk56y7tc
+//	zpkx @2.27.0    v1.2.3-hhhrjzyh2dk56y7tc
+//
+// One identity for three ABIs — which is go-zpkg/packages#225's own sentence,
+// "promote the glibc input into a recorded property", as a live defect rather
+// than a plan. It needed no musl to exist.
+//
+// ⭐ IT ENTERS AS AN ORDINARY DEPENDENCY, not as a new field, and that is the
+// whole reason this is safe: `Concrete.Deps` is already in the published
+// schema, so `artifact.VerifySpec` keeps working and a consumer recomputing
+// the hash from the manifest now SEES the libc listed. A new field would have
+// changed the schema in another repository and invalidated every artifact's
+// verification at once.
+//
+// ⚠ WITH NO PIN THE VERSION IS LEFT EMPTY, AND THAT IS A STATED LIMIT RATHER
+// THAN AN OVERSIGHT. `--libc zpkx` without `--glibc` means "newest at eval
+// time", which is not knowable before the compiler runs — and the identity
+// must be, since the prefix is baked into the binaries. So two zpkx builds
+// either side of a glibc release still share an identity. That edge degrades
+// to "the gnu.org/glibc artifact was used" and no further, exactly as an
+// unhashed dependency prefix degrades to version-level precision above.
+type libcChoice struct {
+	Mode    string // Runner.LibcMode: "zpkx", or "" for the container's own
+	Version string // Runner.Glibc: a pin like "2.27.0", or "" for newest
+}
+
+// libcDep returns the dependency this choice adds, and false when it adds
+// none. ⛔ NOT ON darwin/windows/wasip1: wrapper.go injects the glibc only
+// under `o.LibcZpkx && o.Target.Platform == "linux"`, so recording it anywhere
+// else would make the identity claim a link that never happened.
+func (l libcChoice) libcDep(tgt target.Target) (artifact.Dep, bool) {
+	if l.Mode != "zpkx" || tgt.Platform != "linux" {
+		return artifact.Dep{}, false
+	}
+	return artifact.Dep{Project: "gnu.org/glibc", Version: l.Version}, true
+}
+
+func concreteOf(recipe *pantry.Recipe, tgt target.Target, deps []moustache.Dep, libc libcChoice) (artifact.Concrete, error) {
 	dig, err := recipeDigest(recipe)
 	if err != nil {
 		return artifact.Concrete{}, err
@@ -64,6 +109,14 @@ func concreteOf(recipe *pantry.Recipe, tgt target.Target, deps []moustache.Dep) 
 			Version: d.Version,
 			Hash:    hashOfPrefix(d.Path),
 		})
+	}
+	// ⚠ APPENDED AFTER the declared ones and before the sort, so it takes its
+	// place among them by name rather than by arrival. A recipe that declares
+	// gnu.org/glibc itself would then contribute two entries — correct, and
+	// visibly so: one is the recipe's own edge with a resolved prefix, the
+	// other is the toolchain's with none.
+	if d, ok := libc.libcDep(tgt); ok {
+		c.Deps = append(c.Deps, d)
 	}
 	// Sorted, because this comes from walking a map and a hash that depended
 	// on the order a map was walked would differ between two runs of the same
