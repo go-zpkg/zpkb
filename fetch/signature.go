@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
@@ -106,6 +107,17 @@ type SourcePin struct {
 	// an author who passed every GNU maintainer's key otherwise get the same
 	// "signed by" line, and only the second needs a fingerprint.
 	KeysRead, KeysScanned int
+	// SignedAt is the signature's own creation instant, and it is the clock the
+	// signing key's expiry was judged at (go-zpkg/zpkb#484).
+	//
+	// ⭐ IT IS REPORTED BECAUSE IT IS NOW PART OF THE VERDICT. "Verified" used
+	// to mean "the key is valid now"; it means "the key was valid when it
+	// signed", and a reader of a pull request cannot tell those apart unless
+	// the instant is printed. gpg prints the same thing for the same reason.
+	//
+	// A zero value means the signature carried no creation time, in which case
+	// the strict clock — time.Now() — was used.
+	SignedAt time.Time
 }
 
 // DigestVerified downloads url, verifies a detached OpenPGP signature over
@@ -170,6 +182,36 @@ func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string
 	}
 	defer f.Close()
 
+	// ⛔⛔ THE KEY'S EXPIRY IS JUDGED AT THE SIGNATURE'S CREATION INSTANT, NOT AT
+	// time.Now(), AND THAT IS THE WHOLE OF go-zpkg/zpkb#484.
+	//
+	// A signature's job here is to justify WRITING a digest into a recipe, once,
+	// at the moment the recipe is written. The digest is the durable pin; the
+	// signature is the warrant for it. A warrant issued in 2024 by a key that
+	// was valid in 2024 does not stop being a warrant because the key lapsed in
+	// 2025 — and GNU maintainers let keys lapse routinely.
+	//
+	// Measured instances, all three refused here where `gpg --verify` exits 0
+	// with "Good signature" and a NOTE about the expiry: gnu.org/wget 1.25.0
+	// (go-zpkg/recipes#120 — cited under the repository's CURRENT name, which
+	// `staleref` is the gate for), the second case #484 records, and
+	// x.org/libX11 1.8.14, which is what sent this to be fixed rather than
+	// worked around.
+	//
+	// ⚠ AND THE WEAKENING IS REAL AND BOUNDED, SO IT IS STATED. The creation
+	// time comes from the signature, which an attacker writes — so somebody
+	// holding a lapsed private key could backdate a forgery past the expiry
+	// check. What that buys them is nothing this check was defending: the key is
+	// still THEIRS, the fingerprint is still compared against the one the author
+	// published, and expiry has never been a revocation. A revoked key is
+	// refused at any clock. gpg draws the line in the same place, and the
+	// alternative — a verifier that degrades to "cannot check" as keys age — is
+	// how `sourcepin` stops being able to re-check the pantry at all.
+	cfg, signedAt, err := sigTimeConfig(sig)
+	if err != nil {
+		return SourcePin{}, fmt.Errorf("fetch: %s: %w", sigURL, err)
+	}
+
 	// ⛔ THE SIGNATURE'S ARMOUR DECIDES WHICH CHECK TO CALL, and it is read
 	// rather than guessed from the file extension: `.asc` is conventionally
 	// armoured and `.sig` binary, but the convention is not enforced by anyone
@@ -177,9 +219,9 @@ func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string
 	// differently-encoded one.
 	var signer *openpgp.Entity
 	if bytes.Contains(sig, []byte("-----BEGIN PGP SIGNATURE-----")) {
-		signer, err = openpgp.CheckArmoredDetachedSignature(keys, f, bytes.NewReader(sig), nil)
+		signer, err = openpgp.CheckArmoredDetachedSignature(keys, f, bytes.NewReader(sig), cfg)
 	} else {
-		signer, err = openpgp.CheckDetachedSignature(keys, f, bytes.NewReader(sig), nil)
+		signer, err = openpgp.CheckDetachedSignature(keys, f, bytes.NewReader(sig), cfg)
 	}
 	if err != nil {
 		return SourcePin{}, fmt.Errorf("fetch: %s is not vouched for by the key you passed: %w — "+
@@ -207,7 +249,87 @@ func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string
 		Identity:    primaryIdentity(signer),
 		KeysRead:    len(keys),
 		KeysScanned: scanned,
+		SignedAt:    signedAt,
 	}, nil
+}
+
+// sigTimeConfig returns the packet config that judges a key's expiry at the
+// SIGNATURE's creation instant, and that instant.
+//
+// ⛔ IT PARSES THE SIGNATURE TWICE, ONCE HERE AND ONCE IN THE VERIFIER, AND
+// THAT IS DELIBERATE. go-crypto decides expiry inside CheckDetachedSignature
+// from `config.Now()`, so the clock has to be chosen BEFORE the check runs —
+// there is no hook that sees the signature first. Parsing a few hundred bytes
+// twice is the price of not reimplementing the verifier.
+//
+// ⛔ A SIGNATURE DATED IN THE FUTURE IS REFUSED. Everything below trusts the
+// signature's own clock, so the one claim that cannot be allowed is a time
+// that has not happened: it would let a key's expiry be evaded indefinitely
+// rather than only back to when the key was valid. An hour of slack absorbs
+// clock skew between a release machine and this one.
+//
+// ⚠ AND AN UNDATED SIGNATURE FALLS BACK TO time.Now(), which is the strict
+// behaviour this function exists to relax — because a signature with no
+// creation time gives no warrant to relax anything. A nil Config means
+// time.Now(), so that is what is returned.
+func sigTimeConfig(sig []byte) (*packet.Config, time.Time, error) {
+	t := signatureCreationTime(sig)
+	if t.IsZero() {
+		return nil, time.Time{}, nil
+	}
+	if skew := time.Until(t); skew > time.Hour {
+		return nil, time.Time{}, fmt.Errorf(
+			"the signature says it was made at %s, which is %s in the future — "+
+				"a key's expiry is judged at this instant, so a time that has not "+
+				"happened would evade it entirely", t.UTC().Format(time.RFC3339), skew.Round(time.Second))
+	}
+	return &packet.Config{Time: func() time.Time { return t }}, t, nil
+}
+
+// signatureCreationTime reads the creation instant out of a detached
+// signature, armoured or not. A zero time means there was none to read.
+//
+// ⛔⛔ EVERY PARSE FAILURE FALLS BACK SILENTLY, AND THAT IS THE DESIGN RATHER
+// THAN A SHORTCUT: THERE IS ONE AUTHORITY ON WHETHER A FILE IS A USABLE
+// SIGNATURE, AND IT IS THE VERIFIER. This function answers only "is there a
+// date", and the verifier runs immediately after it with the real file. A
+// second opinion here would produce two different error messages for one
+// broken file, and the one from the function that is NOT checking the
+// signature would arrive first.
+//
+// ⚠ I WROTE THE OPPOSITE FIRST — a comment claiming corrupt armour is
+// reported — and the test written to prove that comment is what disproved it:
+// `armor.Decode` reads only the HEADER, so bad base64 surfaces later, inside
+// packet.NewReader, and reached the fallback arm anyway. The comment was the
+// thing that was wrong. Keeping one authority is also one branch fewer.
+//
+// ⚠ IT READS THE FIRST SIGNATURE PACKET AND STOPS. A detached signature file
+// can hold several; the verifier accepts the file if ANY of them checks out,
+// so a file with two differently-dated signatures is ambiguous about which
+// clock to use. Taking the first is what gpg prints, and the fingerprint check
+// downstream is what actually constrains who signed.
+func signatureCreationTime(sig []byte) time.Time {
+	body := io.Reader(bytes.NewReader(sig))
+	if bytes.Contains(sig, []byte("-----BEGIN PGP SIGNATURE-----")) {
+		block, err := armor.Decode(bytes.NewReader(sig))
+		if err != nil {
+			return time.Time{}
+		}
+		body = block.Body
+	}
+	r := packet.NewReader(body)
+	for {
+		p, err := r.Next()
+		if err != nil {
+			// io.EOF: well-formed and holding no signature packet. Anything
+			// else: unreadable. Both mean "no date", and neither is this
+			// function's verdict to give.
+			return time.Time{}
+		}
+		if s, ok := p.(*packet.Signature); ok {
+			return s.CreationTime
+		}
+	}
 }
 
 // sameFingerprint compares two fingerprints as a person pastes them: `gpg
