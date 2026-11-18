@@ -19,7 +19,7 @@ var muslTarget = target.Target{Platform: "linux", Arch: "x86-64", Libc: "musl"}
 // against glibc carried the SAME Platform, hashed alike, and the mixed closure
 // that go-zpkg/packages#225 exists to prevent would have verified.
 func TestTheBuildIdentityCarriesTheLibc(t *testing.T) {
-	c, err := concreteOf(idRecipe(), muslTarget, nil)
+	c, err := concreteOf(idRecipe(), muslTarget, nil, libcChoice{})
 	if err != nil {
 		t.Fatalf("concreteOf: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestTheBuildIdentityCarriesTheLibc(t *testing.T) {
 // hash of every artifact in existence, and artifact.VerifySpec would then read
 // each of them as tampered with.
 func TestAnUnnamedLibcLeavesTheIdentityAlone(t *testing.T) {
-	c, err := concreteOf(idRecipe(), idTarget, nil)
+	c, err := concreteOf(idRecipe(), idTarget, nil, libcChoice{})
 	if err != nil {
 		t.Fatalf("concreteOf: %v", err)
 	}

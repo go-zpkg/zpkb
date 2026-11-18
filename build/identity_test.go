@@ -22,7 +22,7 @@ var idTarget = target.Target{Platform: "linux", Arch: "x86-64"}
 
 func mustHash(t *testing.T, rec *pantry.Recipe, tgt target.Target, deps []moustache.Dep) string {
 	t.Helper()
-	c, err := concreteOf(rec, tgt, deps)
+	c, err := concreteOf(rec, tgt, deps, libcChoice{})
 	if err != nil {
 		t.Fatalf("concreteOf: %v", err)
 	}
@@ -46,7 +46,7 @@ func mustHash(t *testing.T, rec *pantry.Recipe, tgt target.Target, deps []mousta
 func TestTheIdentityIsRecomputableFromThePublishedSpec(t *testing.T) {
 	c, err := concreteOf(idRecipe(), idTarget, []moustache.Dep{
 		{Project: "openssl.org", Version: "3.6.4", Path: "/s/openssl.org/v3.6.4-habcdefghijklmnop"},
-	})
+	}, libcChoice{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,13 +144,13 @@ func TestEveryInputChangesTheIdentity(t *testing.T) {
 // the hash to be globally unique would use it as one.
 func TestTheHashSeparatesBuildsWithinAVersionAndIsNotAGlobalName(t *testing.T) {
 	rec := idRecipe()
-	c, err := concreteOf(rec, idTarget, nil)
+	c, err := concreteOf(rec, idTarget, nil, libcChoice{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Identical inputs, so identical hashes — the project and version a
 	// caller would pass alongside are not part of it.
-	again, err := concreteOf(rec, idTarget, nil)
+	again, err := concreteOf(rec, idTarget, nil, libcChoice{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestTwoEdgesToOneProjectStillSortTotally(t *testing.T) {
 	if fwd != rev {
 		t.Errorf("two edges to one project hash differently by input order: %q vs %q", fwd, rev)
 	}
-	c, err := concreteOf(idRecipe(), idTarget, []moustache.Dep{deps[1], deps[0]})
+	c, err := concreteOf(idRecipe(), idTarget, []moustache.Dep{deps[1], deps[0]}, libcChoice{})
 	if err != nil {
 		t.Fatal(err)
 	}
