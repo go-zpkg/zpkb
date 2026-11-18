@@ -193,7 +193,8 @@ func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string
 	//
 	// Measured instances, all three refused here where `gpg --verify` exits 0
 	// with "Good signature" and a NOTE about the expiry: gnu.org/wget 1.25.0
-	// (go-zpkg/pantry-overlay#120), the second case #484 records, and
+	// (go-zpkg/recipes#120 — cited under the repository's CURRENT name, which
+	// `staleref` is the gate for), the second case #484 records, and
 	// x.org/libX11 1.8.14, which is what sent this to be fixed rather than
 	// worked around.
 	//
