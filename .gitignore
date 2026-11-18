@@ -2,6 +2,14 @@ bsd-tests.list
 bsd.test
 cov.out
 
+# ⛔ A BACKGROUND CI WATCH LASTS SEVERAL TURNS BY CONSTRUCTION, so its output
+# cannot live in a one-turn scratchpad — the scratchpad is wiped on reboot and
+# the answer vanishes with it, which reads as "the watch reported nothing".
+# It therefore goes in the clone, which is durable; and the clone is a
+# repository, so it has to be ignored or it joins the next commit.
+# go-zpkg/packages carries the same line for the same reason.
+/.prwait-*.log
+
 # The binaries `go build ./cmd/...` drops in the repository root. ⛔ None of
 # these was ignored, and `bk` — this command's old name — sat in HEAD for three
 # months at 19 771 746 bytes (10 575 333 on disk, of a ~15 MiB .git), referenced
