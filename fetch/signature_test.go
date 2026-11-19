@@ -236,10 +236,27 @@ func TestDigestVerifiedRefusesAnotherKeysSignature(t *testing.T) {
 	if err == nil {
 		t.Fatal("a signature by an unknown key was accepted")
 	}
-	for _, want := range []string{"not vouched for", "WHO signed them", "do not pin this"} {
+	// ⚠ THIS USED TO ASSERT THE PHRASE "WHO signed them", and go-zpkg/zpkb#482
+	// is why it no longer does. That sentence was appended to EVERY refusal,
+	// including ones where the key is present and fine, so it stopped
+	// distinguishing anything. For a genuinely unknown issuer the message now
+	// says so and names the id it looked for — which is this test's own stated
+	// intent, met more precisely rather than abandoned.
+	for _, want := range []string{"not vouched for", "do not pin this", "genuinely unknown",
+		"no key in the file you passed"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
+	}
+	// The id is the actionable part: it is what the author greps the keyring for.
+	if id := other.PrimaryKey.KeyId; !strings.Contains(err.Error(), fmt.Sprintf("%016X", id)) {
+		t.Errorf("the refusal does not name the key id %016X it looked for: %v", id, err)
+	}
+	// ⛔ AND IT MUST NOT ADVERTISE A BYTES PROBLEM. The bytes are fine; sending
+	// the reader to --sig-covers here is the defect #482 describes, and
+	// go-zpkg/zpkb#507 introduced exactly that by appending the hint always.
+	if strings.Contains(err.Error(), "--sig-covers") {
+		t.Errorf("an unknown signer is advertised as a bytes problem: %v", err)
 	}
 }
 
