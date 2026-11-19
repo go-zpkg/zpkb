@@ -272,20 +272,23 @@ func digestVerified(url string, sigURLs []string, keyring []byte, wantFPR, cover
 		signer, err = openpgp.CheckDetachedSignature(keys, signed, bytes.NewReader(sig), cfg)
 	}
 	if err != nil {
-		// ⭐ AND WHEN THE SERVED BYTES WERE CHECKED, SAY THAT THE OTHER SHAPE
-		// EXISTS. This exact failure — a good key, a good signature, an RSA
-		// verification failure — is what go-zpkg/zpkb#492 was, and it cost a
-		// day of looking at the key. The hint is not a retry: it names the
-		// flag and leaves the author to establish which bytes upstream signs.
-		hint := ""
-		if covers == CoversServed {
-			hint = " — if the project signs its UNCOMPRESSED tarball, as kernel.org does, " +
-				"the bytes are wrong rather than the key, and --sig-covers decompressed " +
-				"checks the other stream"
+		// ⛔⛔ THE REFUSAL NAMES THE CAUSE IT MET, NOT THE ONE IT HAS A
+		// SENTENCE FOR (go-zpkg/zpkb#482). This message used to end "what
+		// failed is WHO signed them" in every case, which is wrong whenever
+		// the key is present and sends the reader to audit a keyring that is
+		// fine; and go-zpkg/zpkb#507 then appended the --sig-covers hint
+		// unconditionally, so a flagless-key refusal advised checking the
+		// decompressed stream over bytes that were never in question.
+		// classifyDeclined separates the three states by reading the
+		// signature's issuer against the keyring.
+		d := classifyDeclined(sig, keys)
+		lead := "what failed is WHO signed them, so do not pin this until you know why"
+		if d.kind != declinedWithASigningKey {
+			lead = "do not pin this until you know why"
 		}
 		return SourcePin{}, fmt.Errorf("fetch: %s is not vouched for by the key you passed: %w — "+
-			"the bytes downloaded fine and hash to %s; what failed is WHO signed them, "+
-			"so do not pin this until you know why%s", sigURL, err, digest, hint)
+			"the bytes downloaded fine and hash to %s; %s%s",
+			sigURL, err, digest, lead, d.because(covers))
 	}
 
 	got := fmt.Sprintf("%X", signer.PrimaryKey.Fingerprint)
