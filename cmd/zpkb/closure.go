@@ -35,6 +35,8 @@ func runClosure(args []string, stdout, stderr io.Writer) int {
 	checkOrderPath := fs.String("check-order", "", "instead of emitting an order, READ one from this file and say what it decided: an edge out of order outside any cycle is a mistake, and the edges it gives up on inside a cycle are the feedback arc set it chose")
 	cycles := fs.Bool("cycles", false, "instead of the order, name the dependency CYCLES: one strongly connected component per line. Inside a component the emitted order is a guess, and a wrong guess shows up as a build that fails several steps later")
 	implicit := fs.Bool("implicit", false, "also name the soname providers this walk cannot reach — dependencies that exist only in the compiled artefact, which no recipe declares")
+	requireStandalone := fs.Bool("require-standalone", false, "instead of the order, split this closure's projects three ways against --overlay: standalone recipes of ours, FRAGMENTS of ours that resolve only because the pantry is merged underneath, and projects with no recipe of ours at all. `lint --require-standalone` asks the same question of a whole TREE, which answers for projects no toolchain needs; this asks it of the set the campaign is measured on")
+	maxFragments := fs.Int("max-fragments", -1, "with --require-standalone: the number of fragments this closure still has. More fails as a regression, FEWER fails as a ceiling to lower")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -54,7 +56,7 @@ func runClosure(args []string, stdout, stderr io.Writer) int {
 	// The plain runtime walk keeps going through closureOf, which the factory
 	// also calls: one path, so `bk closure` cannot describe an order the
 	// factory would not build.
-	if !*withBuild && !*constraints && !*implicit && !*pins && !*cycles && *checkOrderPath == "" {
+	if !*withBuild && !*constraints && !*implicit && !*pins && !*cycles && !*requireStandalone && *checkOrderPath == "" {
 		order, _, _ := closureOf(lset, *overlayDir, *pantryDir, tgt, roots, func(s string) { fmt.Fprintln(stderr, s) })
 		if code := reportUnreadableRoots(roots, order, stderr); code != 0 {
 			return code
@@ -81,6 +83,13 @@ func runClosure(args []string, stdout, stderr io.Writer) int {
 	if *cycles {
 		printCycles(comps, stdout)
 		return 0
+	}
+	// Asked of the walk's own order, so the population judged is exactly the
+	// one the campaign's measure builds — not a tree, and not a list typed out
+	// beside it that would drift from this walk the first time a dependency
+	// moved.
+	if *requireStandalone {
+		return closureStandalone(g.order, *overlayDir, *maxFragments, stdout, stderr)
 	}
 	// Said every time an order is emitted that has one, because the part of it
 	// that is arbitrary is not visible in the order itself.
