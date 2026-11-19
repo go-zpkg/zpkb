@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/go-zpkg/zpkb/fetch"
 )
 
 // Seams: the command is driven in tests without a network.
 var (
-	fetchDigest   = fetch.Digest
-	fetchVerified = fetch.DigestVerified
-	readKeyFile   = os.ReadFile
+	fetchDigest               = fetch.Digest
+	fetchVerified             = fetch.DigestVerified
+	fetchVerifiedDecompressed = fetch.DigestVerifiedDecompressed
+	readKeyFile               = os.ReadFile
 )
 
 // runSourcePin implements `zpkb sourcepin <url>`: fetch a source archive and
@@ -66,11 +69,22 @@ func runSourcePin(args []string, stdout, stderr io.Writer) int {
 	// the output says how many keys the file held so the author can tell which
 	// case they are in.
 	fingerprint := fset.String("fingerprint", "", "the fingerprint the signing key must have (spaces and colons ignored); without it, any key in --key is accepted")
+	// ⛔⛔ THE DEFAULT IS TODAY'S BEHAVIOUR, SO NOTHING ALREADY RECORDED CHANGES
+	// MEANING. kernel.org signs the UNCOMPRESSED tar — its signature.html says
+	// "the signature is made against the uncompressed version of the archive …
+	// so there is only one signature required for .gz and .xz compressed
+	// versions" — and a recipe's url names the .tar.xz, so the verifier was fed
+	// bytes the signature never covered (go-zpkg/zpkb#492). It is a flag and
+	// not a fallback: retrying the other stream after a failure would make
+	// "it verified the other way" indistinguishable from "somebody signed a
+	// different archive", and a refusal that can be shrugged off is not one.
+	covers := fset.String("sig-covers", fetch.CoversServed,
+		"which bytes the signature covers: `served` (the file at <url>) or decompressed (the .tar inside it, as kernel.org signs)")
 	if err := fset.Parse(args); err != nil {
 		return 2
 	}
 	if fset.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: zpkb sourcepin [--version V] [--sig URL|auto --key FILE --key-source TEXT] <url>")
+		fmt.Fprintln(stderr, "usage: zpkb sourcepin [--version V] [--sig URL|auto --key FILE --key-source TEXT [--sig-covers served|decompressed]] <url>")
 		return 2
 	}
 	url := fset.Arg(0)
@@ -84,13 +98,23 @@ func runSourcePin(args []string, stdout, stderr io.Writer) int {
 			"key's fingerprint came from, which is the one thing no other distribution records)")
 		return 2
 	}
-	if *sig == "" && (*keyFile != "" || *keySource != "" || *fingerprint != "") {
-		fmt.Fprintln(stderr, "sourcepin: --key, --key-source and --fingerprint only mean something with --sig")
+	if *sig == "" && (*keyFile != "" || *keySource != "" || *fingerprint != "" || *covers != fetch.CoversServed) {
+		fmt.Fprintln(stderr, "sourcepin: --key, --key-source, --fingerprint and --sig-covers only mean something with --sig")
+		return 2
+	}
+	// ⛔ A MISSPELLED VALUE MUST NOT FALL BACK TO THE DEFAULT. --sig-covers
+	// decompresed would otherwise verify the served bytes and print a pin that
+	// says `covers served`, which is the one wrong answer this flag exists to
+	// prevent somebody writing into a recipe by hand.
+	if *covers != fetch.CoversServed && *covers != fetch.CoversDecompressed {
+		fmt.Fprintf(stderr, "sourcepin: --sig-covers %q is neither %q nor %q — it says which bytes "+
+			"the project signed, and guessing it wrong is how a digest gets a warrant that "+
+			"never covered it\n", *covers, fetch.CoversServed, fetch.CoversDecompressed)
 		return 2
 	}
 
 	if *sig != "" {
-		return pinSigned(url, *sig, *keyFile, *keySource, *fingerprint, *version, stdout, stderr)
+		return pinSigned(url, *sig, *keyFile, *keySource, *fingerprint, *version, *covers, stdout, stderr)
 	}
 
 	digest, size, err := fetchDigest(url)
@@ -126,6 +150,33 @@ func runSourcePin(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// autoCandidates is what `--sig auto` tries, and it depends on which bytes the
+// signature covers.
+//
+// ⛔⛔ `auto` COULD NOT FIND KERNEL.ORG'S SIGNATURE EVEN IN PRINCIPLE, and
+// appending to the compressed URL is why. go-zpkg/zpkb#492 measured the four
+// names on 2026-11-16: `linux-7.2.15.tar.xz.asc` 404, `.tar.xz.sig` 404,
+// `.tar.xz.sign` 404, `linux-7.2.15.tar.sign` **200**. A signature names the
+// bytes it covers, so when it covers the DECOMPRESSED archive its URL derives
+// from the decompressed name — strip the compression suffix first.
+//
+// `.sign` leads for that shape because it is the name kernel.org publishes;
+// `.asc` and `.sig` follow because [fetch.DigestVerified] moves on from a 404
+// and some projects do use them. For the served shape nothing changes.
+func autoCandidates(url, covers string) []string {
+	if covers != fetch.CoversDecompressed {
+		return []string{url + ".asc", url + ".sig"}
+	}
+	plain := url
+	for _, ext := range []string{".xz", ".gz", ".bz2"} {
+		if strings.HasSuffix(plain, ext) {
+			plain = strings.TrimSuffix(plain, ext)
+			break
+		}
+	}
+	return []string{plain + ".sign", plain + ".asc", plain + ".sig"}
+}
+
 // pinSigned is `sourcepin --sig`: the digest, plus who vouched for the bytes
 // and how the author came to trust them.
 //
@@ -134,7 +185,7 @@ func runSourcePin(args []string, stdout, stderr io.Writer) int {
 // exactly this kind of claim — what the recipe was written from — and a key is
 // that kind of claim. Adding a field before any recipe carries one would be an
 // API written against a guess.
-func pinSigned(url, sig, keyFile, keySource, fingerprint, version string, stdout, stderr io.Writer) int {
+func pinSigned(url, sig, keyFile, keySource, fingerprint, version, covers string, stdout, stderr io.Writer) int {
 	key, err := readKeyFile(keyFile)
 	if err != nil {
 		fmt.Fprintf(stderr, "sourcepin: %v\n", err)
@@ -147,10 +198,14 @@ func pinSigned(url, sig, keyFile, keySource, fingerprint, version string, stdout
 	// record the URL that worked rather than the guess that produced it.
 	cands := []string{sig}
 	if sig == "auto" {
-		cands = []string{url + ".asc", url + ".sig"}
+		cands = autoCandidates(url, covers)
 	}
 
-	pin, err := fetchVerified(url, cands, key, fingerprint)
+	verify := fetchVerified
+	if covers == fetch.CoversDecompressed {
+		verify = fetchVerifiedDecompressed
+	}
+	pin, err := verify(url, cands, key, fingerprint)
 	if err != nil {
 		fmt.Fprintf(stderr, "sourcepin: %v\n", err)
 		return 1
@@ -159,6 +214,30 @@ func pinSigned(url, sig, keyFile, keySource, fingerprint, version string, stdout
 	fmt.Fprintf(stdout, "%s\n  %d bytes, fetched with the builder's own fetcher\n", url, pin.Size)
 	fmt.Fprintf(stdout, "  signed by %s\n  %s\n  verified against %s — no keyserver was asked\n",
 		pin.Fingerprint, pin.Identity, keyFile)
+	// ⛔⛔ PRINTED BECAUSE THE FIELD'S OWN DOC SAID IT WAS AND IT WAS NOT.
+	// go-zpkg/zpkb#506 added SourcePin.SignedAt with the comment "it is
+	// reported because it is now part of the verdict … a reader of a pull
+	// request cannot tell those apart unless the instant is printed" — and
+	// nothing printed it. The test asserted the field was populated, which is
+	// not the same claim. "Verified" now means "the key was valid WHEN IT
+	// SIGNED", and that is a different verdict from "the key is valid", so the
+	// clock it was judged at belongs in the output. gpg prints it for the same
+	// reason.
+	if pin.SignedAt.IsZero() {
+		fmt.Fprintf(stdout, "  ⚠ the signature carries no creation time, so the key's expiry "+
+			"was judged at this instant — the strict clock\n")
+	} else {
+		fmt.Fprintf(stdout, "  signed at %s, and that is the instant the key's expiry was judged at\n",
+			pin.SignedAt.UTC().Format(time.RFC3339))
+	}
+	// ⭐ WHICH BYTES, SAID OUT LOUD, BECAUSE THE DIGEST AND THE WARRANT NO
+	// LONGER DESCRIBE THE SAME ONES. Only said for the uncommon answer: a line
+	// on every invocation repeating the default is noise that trains the eye to
+	// skip the line that matters.
+	if pin.Covers == fetch.CoversDecompressed {
+		fmt.Fprintf(stdout, "  the signature covers the DECOMPRESSED archive, not the file above; "+
+			"the digest below is still the file's, which is what a build downloads\n")
+	}
 	// ⛔ THE KEYRING'S REAL SHAPE, SAID OUT LOUD. An author who passed a file
 	// holding one key and an author who passed every GNU maintainer's key get
 	// the same "signed by" line otherwise, and only the second needs
@@ -208,6 +287,24 @@ func pinSigned(url, sig, keyFile, keySource, fingerprint, version string, stdout
 		"  # published\" — a .sig there FAILS the build. It belongs in provenance:\n"+
 		"  #   %s\n", pin.SigURL)
 
+	// ⛔⛔ THE PASTED BLOCK IS THE ONLY PART THAT SURVIVES, so every fact the
+	// terminal printed above has to be in it too. The lines above are read once
+	// by whoever ran the command; this is what the next reader of the recipe
+	// has. A verdict that exists only in a scrollback was not recorded.
+	var extra string
+	if !pin.SignedAt.IsZero() {
+		extra += fmt.Sprintf("  signed at  %s — the instant the key's expiry was judged at,\n"+
+			"             not the moment this was run, so a key that has lapsed since does\n"+
+			"             not retract the warrant (go-zpkg/zpkb#484)\n",
+			pin.SignedAt.UTC().Format(time.RFC3339))
+	}
+	if pin.Covers == fetch.CoversDecompressed {
+		extra += "  covers     the DECOMPRESSED archive, which is what this project signs:\n" +
+			"             one signature serves every compression of one release. The sha256\n" +
+			"             below is the COMPRESSED file's, because that is what a build\n" +
+			"             downloads — two byte streams, one operation (go-zpkg/zpkb#492)\n"
+	}
+
 	// The block to paste. The fingerprint is uppercase hex with no separators,
 	// which is Arch's documented rule and the strictest of the three read.
 	fmt.Fprintf(stdout, "\nprovenance {\n  note = <<EOT\n"+
@@ -219,11 +316,12 @@ func pinSigned(url, sig, keyFile, keySource, fingerprint, version string, stdout
 		"  signature  %s\n"+
 		"  key        %s\n"+
 		"  identity   %s\n"+
+		"%s"+
 		"  fingerprint came from: %s\n\n"+
 		"No keyserver was consulted. Guix's --key-download defaults to `auto`,\n"+
 		"which it documents as `interactive` on a TTY and \"else always\" — so in CI\n"+
 		"an unknown key is fetched and accepted, and the check degrades to\n"+
 		"\"somebody signed it\". Here an unknown key is a refusal.\nEOT\n}\n",
-		pin.SigURL, keyFile, pin.Identity, keySource)
+		pin.SigURL, keyFile, pin.Identity, extra, keySource)
 	return 0
 }

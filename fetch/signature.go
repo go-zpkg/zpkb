@@ -118,6 +118,15 @@ type SourcePin struct {
 	// A zero value means the signature carried no creation time, in which case
 	// the strict clock — time.Now() — was used.
 	SignedAt time.Time
+	// Covers is which bytes the signature was checked over: [CoversServed] or
+	// [CoversDecompressed].
+	//
+	// ⭐ IT IS RECORDED BECAUSE THE DIGEST AND THE WARRANT NO LONGER DESCRIBE
+	// THE SAME BYTES. SHA256 is always the compressed file a build downloads;
+	// for a project signing its uncompressed tarball the signature covers
+	// something else, and a reader of the recipe cannot tell from either value
+	// which was checked (go-zpkg/zpkb#492).
+	Covers string
 }
 
 // DigestVerified downloads url, verifies a detached OpenPGP signature over
@@ -142,7 +151,27 @@ type SourcePin struct {
 // explicit: makepkg "will only accept signatures from the keys listed here and
 // will ignore the trust values from the keyring". Empty means the caller
 // accepts any key in the file, which is right only for a file holding one.
+//
+// The signature must cover the bytes the URL serves. For a project that signs
+// its UNCOMPRESSED tarball instead, see [DigestVerifiedDecompressed].
 func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string) (SourcePin, error) {
+	return digestVerified(url, sigURLs, keyring, wantFPR, CoversServed)
+}
+
+// DigestVerifiedDecompressed is [DigestVerified] for a project whose signature
+// covers the archive's DECOMPRESSED stream rather than the file it serves,
+// which is how kernel.org signs every kernel. The digest returned is still the
+// compressed file's, because that is what a build downloads.
+//
+// ⛔ IT IS A SEPARATE FUNCTION AND NOT A MODE ARGUMENT SO THAT NEITHER CALL
+// SITE CAN NAME A THIRD THING. There are exactly two answers and both have a
+// name; a string parameter would admit a typo that reads as a choice, and this
+// is the function whose whole job is to refuse things.
+func DigestVerifiedDecompressed(url string, sigURLs []string, keyring []byte, wantFPR string) (SourcePin, error) {
+	return digestVerified(url, sigURLs, keyring, wantFPR, CoversDecompressed)
+}
+
+func digestVerified(url string, sigURLs []string, keyring []byte, wantFPR, covers string) (SourcePin, error) {
 	if len(sigURLs) == 0 {
 		return SourcePin{}, fmt.Errorf("fetch: %s: no signature URL to try", url)
 	}
@@ -182,6 +211,25 @@ func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string
 	}
 	defer f.Close()
 
+	// The bytes the signature is supposed to cover, which for almost every
+	// project are the bytes just hashed and for kernel.org are not
+	// (go-zpkg/zpkb#492). Decided here, before the verifier runs, because the
+	// verifier takes a reader and has no say in what is in it.
+	signed := io.Reader(f)
+	if covers == CoversDecompressed {
+		d, err := decompressor(f, url)
+		if err != nil {
+			return SourcePin{}, err
+		}
+		// gzip's reader closes, xz's and bzip2's have nothing to close. f is
+		// closed by the defer above and must not be closed twice here, which
+		// is why this asks the DECOMPRESSOR and not the stream variable.
+		if c, ok := d.(io.Closer); ok {
+			defer c.Close()
+		}
+		signed = d
+	}
+
 	// ⛔⛔ THE KEY'S EXPIRY IS JUDGED AT THE SIGNATURE'S CREATION INSTANT, NOT AT
 	// time.Now(), AND THAT IS THE WHOLE OF go-zpkg/zpkb#484.
 	//
@@ -219,14 +267,25 @@ func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string
 	// differently-encoded one.
 	var signer *openpgp.Entity
 	if bytes.Contains(sig, []byte("-----BEGIN PGP SIGNATURE-----")) {
-		signer, err = openpgp.CheckArmoredDetachedSignature(keys, f, bytes.NewReader(sig), cfg)
+		signer, err = openpgp.CheckArmoredDetachedSignature(keys, signed, bytes.NewReader(sig), cfg)
 	} else {
-		signer, err = openpgp.CheckDetachedSignature(keys, f, bytes.NewReader(sig), cfg)
+		signer, err = openpgp.CheckDetachedSignature(keys, signed, bytes.NewReader(sig), cfg)
 	}
 	if err != nil {
+		// ⭐ AND WHEN THE SERVED BYTES WERE CHECKED, SAY THAT THE OTHER SHAPE
+		// EXISTS. This exact failure — a good key, a good signature, an RSA
+		// verification failure — is what go-zpkg/zpkb#492 was, and it cost a
+		// day of looking at the key. The hint is not a retry: it names the
+		// flag and leaves the author to establish which bytes upstream signs.
+		hint := ""
+		if covers == CoversServed {
+			hint = " — if the project signs its UNCOMPRESSED tarball, as kernel.org does, " +
+				"the bytes are wrong rather than the key, and --sig-covers decompressed " +
+				"checks the other stream"
+		}
 		return SourcePin{}, fmt.Errorf("fetch: %s is not vouched for by the key you passed: %w — "+
 			"the bytes downloaded fine and hash to %s; what failed is WHO signed them, "+
-			"so do not pin this until you know why", sigURL, err, digest)
+			"so do not pin this until you know why%s", sigURL, err, digest, hint)
 	}
 
 	got := fmt.Sprintf("%X", signer.PrimaryKey.Fingerprint)
@@ -250,6 +309,7 @@ func DigestVerified(url string, sigURLs []string, keyring []byte, wantFPR string
 		KeysRead:    len(keys),
 		KeysScanned: scanned,
 		SignedAt:    signedAt,
+		Covers:      covers,
 	}, nil
 }
 
