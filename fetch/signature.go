@@ -118,6 +118,16 @@ type SourcePin struct {
 	// A zero value means the signature carried no creation time, in which case
 	// the strict clock — time.Now() — was used.
 	SignedAt time.Time
+	// JudgedAt is the instant every check was actually judged at. It equals
+	// SignedAt unless the signing key's self-signatures were refreshed after
+	// the signature was made, in which case it is the newest of them (capped at
+	// the present) — go-zpkg/zpkb#512.
+	//
+	// ⛔ A SEPARATE FIELD BECAUSE THE PRINTED SENTENCE WOULD OTHERWISE LIE.
+	// sourcepin printed "signed at X, and that is the instant the key's expiry
+	// was judged at"; once the two can differ, that is true only when they do
+	// not, and a reader has no way to tell which case they are in.
+	JudgedAt time.Time
 	// Covers is which bytes the signature was checked over: [CoversServed] or
 	// [CoversDecompressed].
 	//
@@ -259,6 +269,15 @@ func digestVerified(url string, sigURLs []string, keyring []byte, wantFPR, cover
 	if err != nil {
 		return SourcePin{}, fmt.Errorf("fetch: %s: %w", sigURL, err)
 	}
+	// ⛔ AND MOVED LATER IF THE KEY WAS REFRESHED SINCE (go-zpkg/zpkb#512,
+	// sigrefresh.go): judged at the data signature's instant alone, a
+	// self-signature made after it counts as expired, so every release signed
+	// before a routine key refresh was refused.
+	judgedAt := signedAt
+	if cfg != nil {
+		judgedAt = refreshedClock(signedAt, sig, keys, time.Now())
+		cfg = &packet.Config{Time: func() time.Time { return judgedAt }}
+	}
 
 	// ⛔ THE SIGNATURE'S ARMOUR DECIDES WHICH CHECK TO CALL, and it is read
 	// rather than guessed from the file extension: `.asc` is conventionally
@@ -281,14 +300,10 @@ func digestVerified(url string, sigURLs []string, keyring []byte, wantFPR, cover
 		// decompressed stream over bytes that were never in question.
 		// classifyDeclined separates the three states by reading the
 		// signature's issuer against the keyring.
-		d := classifyDeclined(sig, keys)
-		lead := "what failed is WHO signed them, so do not pin this until you know why"
-		if d.kind != declinedWithASigningKey {
-			lead = "do not pin this until you know why"
-		}
+		lead, why := refusalCause(err, classifyDeclined(sig, keys), covers, signedAt, judgedAt)
 		return SourcePin{}, fmt.Errorf("fetch: %s is not vouched for by the key you passed: %w — "+
 			"the bytes downloaded fine and hash to %s; %s%s",
-			sigURL, err, digest, lead, d.because(covers))
+			sigURL, err, digest, lead, why)
 	}
 
 	got := fmt.Sprintf("%X", signer.PrimaryKey.Fingerprint)
@@ -312,6 +327,7 @@ func digestVerified(url string, sigURLs []string, keyring []byte, wantFPR, cover
 		KeysRead:    len(keys),
 		KeysScanned: scanned,
 		SignedAt:    signedAt,
+		JudgedAt:    judgedAt,
 		Covers:      covers,
 	}, nil
 }

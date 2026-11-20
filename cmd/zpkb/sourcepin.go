@@ -223,12 +223,26 @@ func pinSigned(url, sig, keyFile, keySource, fingerprint, version, covers string
 	// SIGNED", and that is a different verdict from "the key is valid", so the
 	// clock it was judged at belongs in the output. gpg prints it for the same
 	// reason.
-	if pin.SignedAt.IsZero() {
+	// ⛔ AND IT SAYS WHICH INSTANT THE CHECKS RAN AT WHEN THAT IS NOT THE
+	// SIGNATURE'S. Since go-zpkg/zpkb#512 a key refreshed after it signed is
+	// judged at its newest self-signature; the sentence below used to claim the
+	// signature's own instant unconditionally, and on gnu.org/libidn2 2.3.8 it
+	// printed exactly that while the checks had run fourteen months later.
+	judged := pin.JudgedAt
+	if judged.IsZero() {
+		judged = pin.SignedAt
+	}
+	switch {
+	case pin.SignedAt.IsZero():
 		fmt.Fprintf(stdout, "  ⚠ the signature carries no creation time, so the key's expiry "+
 			"was judged at this instant — the strict clock\n")
-	} else {
+	case judged.Equal(pin.SignedAt):
 		fmt.Fprintf(stdout, "  signed at %s, and that is the instant the key's expiry was judged at\n",
 			pin.SignedAt.UTC().Format(time.RFC3339))
+	default:
+		fmt.Fprintf(stdout, "  signed at %s; judged at %s, the key's newest self-signature, "+
+			"because the key was refreshed after it signed (go-zpkg/zpkb#512)\n",
+			pin.SignedAt.UTC().Format(time.RFC3339), judged.UTC().Format(time.RFC3339))
 	}
 	// ⭐ WHICH BYTES, SAID OUT LOUD, BECAUSE THE DIGEST AND THE WARRANT NO
 	// LONGER DESCRIBE THE SAME ONES. Only said for the uncommon answer: a line
@@ -292,11 +306,19 @@ func pinSigned(url, sig, keyFile, keySource, fingerprint, version, covers string
 	// by whoever ran the command; this is what the next reader of the recipe
 	// has. A verdict that exists only in a scrollback was not recorded.
 	var extra string
-	if !pin.SignedAt.IsZero() {
+	switch {
+	case pin.SignedAt.IsZero():
+	case judged.Equal(pin.SignedAt):
 		extra += fmt.Sprintf("  signed at  %s — the instant the key's expiry was judged at,\n"+
 			"             not the moment this was run, so a key that has lapsed since does\n"+
 			"             not retract the warrant (go-zpkg/zpkb#484)\n",
 			pin.SignedAt.UTC().Format(time.RFC3339))
+	default:
+		extra += fmt.Sprintf("  signed at  %s\n"+
+			"  judged at  %s — the signing key's newest self-signature: it was\n"+
+			"             refreshed after it signed, and a self-signature newer than\n"+
+			"             the instant judged would count as expired (go-zpkg/zpkb#512)\n",
+			pin.SignedAt.UTC().Format(time.RFC3339), judged.UTC().Format(time.RFC3339))
 	}
 	if pin.Covers == fetch.CoversDecompressed {
 		extra += "  covers     the DECOMPRESSED archive, which is what this project signs:\n" +
