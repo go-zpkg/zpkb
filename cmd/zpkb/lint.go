@@ -14,6 +14,7 @@ import (
 	"github.com/go-zpkg/artifact"
 	"github.com/go-zpkg/zpkb/build"
 	"github.com/go-zpkg/zpkb/buildscript"
+	"github.com/go-zpkg/zpkb/logical"
 	"github.com/go-zpkg/zpkb/recipefile"
 )
 
@@ -211,8 +212,42 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	maxNoProv := fset.Int("max-no-provenance", -1,
 		"with --require-provenance: the number of recipes in this tree that still record none. "+
 			"More fails as a regression, FEWER fails as a ceiling to lower")
+	// ⛔⛔ AN OVERRIDE THE LOADERS NO LONGER APPLY, AND NOTHING SAID SO
+	// (go-zpkg/zpkb#516). Since v0.90.0 a STANDALONE overlay recipe is the whole
+	// recipe: LoadBuildRecipe and LoadMerged skip set.ApplyTo for it. So every
+	// logical override (go-zpkg/packages' overrides/*.hcl) whose project has a
+	// standalone recipe in THIS tree is dead — parsed, reviewed, applied by
+	// nothing — and that is harmless only if its fix is already in the recipe.
+	//
+	// The judge is the one the loaders use (artifact.IsStandalone, through
+	// missingEssentials), not a second definition. A WARNING by default, because
+	// the overlap must be carried into the recipes before it can be a refusal;
+	// --require-live-overrides is the refusal.
+	overridesDir := fset.String("overrides", "",
+		"a directory of logical overrides (go-zpkg/packages' overrides/): report each one whose "+
+			"project has a standalone recipe in this tree, because the loaders no longer apply it")
+	requireLive := fset.Bool("require-live-overrides", false,
+		"with --overrides: fail when an override is dead instead of warning")
 	if err := fset.Parse(args); err != nil {
 		return 2
+	}
+	if *requireLive && *overridesDir == "" {
+		fmt.Fprintln(stderr, "lint: --require-live-overrides judges the overrides "+
+			"--overrides names, and does nothing without it")
+		return 2
+	}
+	var overrideSet *logical.Set
+	if *overridesDir != "" {
+		var err error
+		if overrideSet, err = logical.LoadDir(*overridesDir); err != nil {
+			fmt.Fprintf(stderr, "lint: %v\n", err)
+			return 1
+		}
+		// An empty directory is the wrong directory, not a clean tree.
+		if len(overrideSet.Projects()) == 0 {
+			fmt.Fprintf(stderr, "lint: no override under %s — is that the right directory?\n", *overridesDir)
+			return 1
+		}
 	}
 
 	// ⛔ A FLAG THAT SILENTLY DOES NOTHING IS WORSE THAN A MISSING ONE: a lane
@@ -273,7 +308,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv []string
+	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead []string
 	for _, proj := range projects {
 		// The project's DIRECTORY rather than (dir, project): the loader that
 		// takes a pantry and a project joins `projects/` in, which is right for
@@ -296,6 +331,10 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		if miss := missingEssentials(doc); *requireStandalone && len(miss) > 0 {
 			fragments = append(fragments, fmt.Sprintf("  %s: states no %s",
 				proj, strings.Join(miss, ", no ")))
+		}
+		if overrideSet != nil && overrideSet.For(proj) != nil && len(missingEssentials(doc)) == 0 {
+			dead = append(dead, fmt.Sprintf("  %s: %s — %s", proj, overrideSet.Files[proj],
+				deadOverrideVerdict(overrideSet.For(proj), doc)))
 		}
 		if u := shaNamesASignature(r.Distributable); u != "" {
 			signedSha = append(signedSha, fmt.Sprintf("  %s: sha = %q", proj, u))
@@ -375,6 +414,17 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"(go-zpkg/zpkb#494). The names the builder does provide come from "+
 			"buildscript.ExportedNames() and build.PassThroughEnv:\n", len(unknownEnv), len(projects))
 		fmt.Fprintln(stderr, strings.Join(unknownEnv, "\n"))
+	}
+	if overrideSet != nil {
+		fmt.Fprintf(stdout, "%d override(s) read from %s\n", len(overrideSet.Projects()), *overridesDir)
+	}
+	if len(dead) > 0 {
+		sort.Strings(dead)
+		fmt.Fprintf(stderr, "%d override(s) are DEAD: the project has a standalone recipe in %s, "+
+			"which is the whole recipe and is built without its logical overrides "+
+			"(go-zpkg/zpkb#514, #516). Carry the fix into the recipe, citing the override, "+
+			"and delete the override — or say in the recipe why it does not apply:\n", len(dead), root)
+		fmt.Fprintln(stderr, strings.Join(dead, "\n"))
 	}
 	if len(notHCL) > 0 {
 		sort.Strings(notHCL)
@@ -469,6 +519,9 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	if len(notHCL) > 0 {
 		return 1
 	}
+	if *requireLive && len(dead) > 0 {
+		return 1
+	}
 	// Also no tolerance and no ceiling: the tree it was written for has none.
 	if len(unrendered) > 0 {
 		return 1
@@ -480,6 +533,53 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// deadOverrideVerdict says whether a dead override's fix is already in the
+// recipe that retired it, by running its operations against a COPY of the
+// recipe with the applier the builder uses: an operation that would still
+// change the document is a fix the recipe LACKS (a defect to carry over), one
+// that finds it already true is a fix the recipe has. Each operation is judged
+// alone, in order, so one gone premise does not hide the rest.
+func deadOverrideVerdict(o *logical.Override, doc map[string]any) string {
+	cp, _ := cloneDoc(doc).(map[string]any)
+	var missing, gone []string
+	for _, op := range o.Ops {
+		res, err := logical.Apply(cp, []logical.Op{op})
+		switch {
+		case err != nil:
+			gone = append(gone, op.Path.String())
+		case len(res) == 1 && res[0].Outcome == logical.Applied:
+			missing = append(missing, op.Path.String())
+		}
+	}
+	switch {
+	case len(missing) > 0:
+		return "fix MISSING from the recipe: " + strings.Join(missing, ", ")
+	case len(gone) > 0:
+		return "premise gone in the recipe: " + strings.Join(gone, ", ")
+	}
+	return "fix already in the recipe"
+}
+
+// cloneDoc deep-copies a recipe document, because Apply edits in place and the
+// document is still the recipe's other checks' input.
+func cloneDoc(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			m[k] = cloneDoc(e)
+		}
+		return m
+	case []any:
+		l := make([]any, len(x))
+		for i, e := range x {
+			l[i] = cloneDoc(e)
+		}
+		return l
+	}
+	return v
 }
 
 // hclRecipeName is the one recipe file name our own trees carry. It is a
