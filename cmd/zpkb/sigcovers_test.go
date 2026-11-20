@@ -224,3 +224,42 @@ func TestTheProvenanceBlockSaysWhichBytes(t *testing.T) {
 		t.Errorf("the served shape talks about decompression:\n%s", out)
 	}
 }
+
+// ⛔⛔ TestARefreshedKeySaysWhichInstantItWasJudgedAt (go-zpkg/zpkb#512).
+// The output said "signed at X, and that is the instant the key's expiry was
+// judged at" unconditionally — and on gnu.org/libidn2 2.3.8 printed exactly
+// that while the checks had run at the key's refresh, fourteen months later.
+// When the two differ, both are printed, in the terminal and in the block that
+// survives into the recipe.
+func TestARefreshedKeySaysWhichInstantItWasJudgedAt(t *testing.T) {
+	refreshed := aPin
+	refreshed.SignedAt = time.Date(2025, 3, 8, 23, 10, 44, 0, time.UTC)
+	refreshed.JudgedAt = time.Date(2026, 4, 17, 8, 55, 45, 0, time.UTC)
+	rc, out, errb, _ := coveredPin(t, refreshed, signedArgs()...)
+	if rc != 0 {
+		t.Fatalf("rc = %d, stderr = %q", rc, errb)
+	}
+	if strings.Contains(out, "and that is the instant the key's expiry was judged at") {
+		t.Errorf("the output claims the signature's own instant was the one judged:\n%s", out)
+	}
+	for _, want := range []string{"2025-03-08T23:10:44Z", "judged at 2026-04-17T08:55:45Z", "refreshed after it signed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output does not say %q:\n%s", want, out)
+		}
+	}
+	block := out[strings.Index(out, "provenance {"):]
+	if !strings.Contains(block, "judged at  2026-04-17T08:55:45Z") {
+		t.Errorf("the pasted block does not carry the judged instant:\n%s", block)
+	}
+
+	// ⚠ THE CONTROL: the same instant twice keeps the old sentence — an
+	// unrefreshed key must read exactly as it did before #512.
+	same := aPin
+	same.SignedAt = refreshed.SignedAt
+	same.JudgedAt = refreshed.SignedAt
+	_, out, _, _ = coveredPin(t, same, signedArgs()...)
+	if !strings.Contains(out, "and that is the instant the key's expiry was judged at") ||
+		strings.Contains(out, "judged at 20") {
+		t.Errorf("an unrefreshed key's output changed:\n%s", out)
+	}
+}
