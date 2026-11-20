@@ -64,6 +64,37 @@ func TestFetchFileRefusesAURLThatNamesNoFile(t *testing.T) {
 	}
 }
 
+// A URL that names no file is refused BEFORE anything is downloaded.
+func TestFetchFileRefusesBeforeContactingTheServer(t *testing.T) {
+	hits := 0
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer s.Close()
+	dir := t.TempDir()
+	if digest, err := FetchFile(s.URL+"/dir/", dir); err == nil || digest != "" {
+		t.Errorf("got %q, %v", digest, err)
+	}
+	if hits != 0 {
+		t.Errorf("the server was contacted %d times", hits)
+	}
+}
+
+func TestFetchFileReportsAnOpenFailureAsOne(t *testing.T) {
+	s := serve(t, []byte("body"))
+	restoreSeams(t)
+	osOpen = func(string) (*os.File, error) { return nil, errors.New("boom") }
+	dir := t.TempDir()
+	digest, err := FetchFile(s.URL+"/x.pem", dir)
+	if err == nil || !strings.Contains(err.Error(), "fetch: open") || digest == "" {
+		t.Errorf("got %q, %v", digest, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "x.pem")); err == nil {
+		t.Error("a file was written although the temp file could not be opened")
+	}
+}
+
 func TestFetchFileNeverOverwrites(t *testing.T) {
 	s := serve(t, []byte("new"))
 	dir := t.TempDir()

@@ -209,7 +209,8 @@ func fileName(rawURL string) (string, error) {
 		return "", fmt.Errorf("fetch: bad URL %q: %w", rawURL, err)
 	}
 	name := path.Base(u.Path)
-	if u.Path == "" || strings.HasSuffix(u.Path, "/") || name == "." || name == ".." || strings.ContainsAny(name, "\\\x00") {
+	// path.Base("") is ".", so an empty path is refused by the "." test.
+	if strings.HasSuffix(u.Path, "/") || name == "." || name == ".." || strings.ContainsAny(name, "\\\x00") {
 		return "", fmt.Errorf("fetch: %q names no file: its path has no final segment", rawURL)
 	}
 	return name, nil
