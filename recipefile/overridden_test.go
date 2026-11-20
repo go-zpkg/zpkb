@@ -256,6 +256,124 @@ edits   = [{ path = "dependencies[\"openssl.org\"]", set = "^3" }]
 	}
 }
 
+// upstreamTwinYAML is a pantry recipe carrying everything a standalone overlay
+// recipe must NOT inherit: a dependency, a build dependency, a build.env
+// platform key and a build.working-directory.
+const upstreamTwinYAML = `versions:
+  - 2.0.0
+distributable:
+  url: https://up.example/{{version}}.tar.gz
+dependencies:
+  openssl.org: ^1.1
+  unicode.org: ^71
+build:
+  dependencies:
+    ninja-build.org: '*'
+  working-directory: build
+  env:
+    linux/x86-64:
+      LDFLAGS: -pie
+  script: make install
+provides:
+  - bin/upstream
+`
+
+const standaloneHCL = `versions = ["1.0.0"]
+distributable { url = "https://ours.example/x.tar.gz" }
+dependencies = { "openssl.org" = "^3" }
+build { script = "./configure" }
+provides = ["bin/ours"]
+`
+
+// fragmentHCL states `dependencies` and nothing else.
+const fragmentHCL = "dependencies = { \"openssl.org\" = \"^3\" }\n"
+
+// leaks names the four inherited keys that appear in a loaded recipe.
+func leaks(deps map[string]any, build any) []string {
+	var out []string
+	if _, ok := deps["unicode.org"]; ok {
+		out = append(out, "dependencies")
+	}
+	b := fmt.Sprint(build)
+	for k, needle := range map[string]string{
+		"build.dependencies":      "ninja-build.org",
+		"build.env":               "LDFLAGS",
+		"build.working-directory": "working-directory",
+	} {
+		if strings.Contains(b, needle) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// TestStandaloneOverlayIsTheWholeRecipe: go-zpkg/zpkb#514. A recipe of ours that
+// states versions, distributable and build is built and resolved ALONE — none of
+// upstream's extra keys appears, on the build path or the merged one — and a
+// fragment still inherits all four.
+func TestStandaloneOverlayIsTheWholeRecipe(t *testing.T) {
+	pantry, overlay := t.TempDir(), t.TempDir()
+	writeRecipe(t, pantry, "whole.org", "package.yml", upstreamTwinYAML)
+	writeRecipe(t, pantry, "frag.org", "package.yml", upstreamTwinYAML)
+	writeRecipe(t, overlay, "whole.org", "package.hcl", standaloneHCL)
+	writeRecipe(t, overlay, "frag.org", "package.hcl", fragmentHCL)
+	// A logical override on the standalone project must NOT apply to it: a
+	// standalone recipe is ours entire, and the override edits upstream's.
+	set := setFrom(t, `
+project = "whole.org"
+why     = "an edit to upstream's recipe"
+edits   = [{ path = "dependencies[\"openssl.org\"]", set = "^9" }]
+`)
+
+	r, dir, err := LoadBuildRecipe(set, overlay, pantry, "whole.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := leaks(r.Dependencies, r.Build); len(got) != 0 {
+		t.Errorf("build path: standalone recipe inherited %v", got)
+	}
+	if r.Dependencies["openssl.org"] != "^3" || fmt.Sprint(r.Provides) != "[bin/ours]" {
+		t.Errorf("build path: not ours (override applied or pantry won): %v %v", r.Dependencies, r.Provides)
+	}
+	if dir != Dir(overlay, "whole.org") {
+		t.Errorf("dir = %q, want the overlay's", dir)
+	}
+
+	m, err := LoadMerged(set, overlay, pantry, "whole.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := leaks(m.Dependencies, m.Build); len(got) != 0 {
+		t.Errorf("merged path: standalone recipe inherited %v", got)
+	}
+	if m.Dependencies["openssl.org"] != "^3" {
+		t.Errorf("merged path: override applied to a standalone recipe: %v", m.Dependencies)
+	}
+
+	// A fragment still inherits all four, through the merge.
+	f, err := LoadMerged(nil, overlay, pantry, "frag.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := leaks(f.Dependencies, f.Build); len(got) != 4 {
+		t.Errorf("fragment must inherit all four keys, inherited %v", got)
+	}
+}
+
+// An overlay recipe that exists and does not parse is reported on the build
+// path rather than skipped for the pantry's.
+func TestLoadBuildRecipeStandaloneEdges(t *testing.T) {
+	pantry, overlay := t.TempDir(), t.TempDir()
+	writeRecipe(t, pantry, "x.org", "package.yml", upstreamTwinYAML)
+	writeRecipe(t, overlay, "x.org", "package.hcl", "distributable {")
+	if _, _, err := LoadBuildRecipe(nil, overlay, pantry, "x.org"); err == nil {
+		t.Error("an overlay recipe that exists and does not parse must be reported")
+	}
+	if _, _, err := LoadBuildRecipe(nil, overlay, pantry, "elsewhere.org"); err == nil {
+		t.Error("a project in neither tree must be an error")
+	}
+}
+
 // TestLoadMergedMerges pins the rule a REDUCED overlay depends on. An
 // entry that states `dependencies` and nothing else is a fragment, and reading
 // it whole gave a recipe with no build and no distributable — measured as

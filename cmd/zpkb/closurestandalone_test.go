@@ -175,7 +175,10 @@ func TestRunClosureRequireStandaloneIsWired(t *testing.T) {
 	// populations.
 	writeClosureRecipe(t, pantry, "app.org", "dependencies:\n  lib.org: '*'\nversions:\n  github: a/app/tags\nbuild: make\n")
 	writeClosureRecipe(t, pantry, "lib.org", "versions:\n  github: a/lib/tags\nbuild: make\n")
-	writeClosureRecipe(t, overlay, "app.org", wholeRecipe)
+	// A standalone overlay recipe is the WHOLE recipe (go-zpkg/zpkb#514), so the
+	// edge to lib.org has to be STATED by ours: the pantry's twin no longer
+	// lends it.
+	writeClosureRecipe(t, overlay, "app.org", "dependencies:\n  lib.org: '*'\n"+wholeRecipe)
 
 	var out, errb bytes.Buffer
 	code := runClosure([]string{"--recipe-dir", pantry, "--overlay", overlay,

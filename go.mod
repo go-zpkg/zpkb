@@ -7,12 +7,12 @@ require (
 	github.com/bluekeyes/go-gitdiff v0.9.0
 	github.com/go-attest/sbom v0.3.0
 	github.com/go-attest/sign v0.3.0
-	github.com/go-compressions/xz v0.1.0
+	github.com/go-compressions/xz v0.3.1
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-regexp/engine v0.3.2
 	github.com/go-versions/semver v0.3.0
-	github.com/go-zpkg/artifact v0.88.0
-	github.com/klauspost/compress v1.20.3
+	github.com/go-zpkg/artifact v0.90.0
+	github.com/klauspost/compress v1.20.4
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
@@ -41,7 +41,7 @@ require (
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	github.com/zclconf/go-cty v1.19.0 // indirect
+	github.com/zclconf/go-cty v1.20.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.62.0 // indirect

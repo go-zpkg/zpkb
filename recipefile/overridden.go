@@ -119,7 +119,21 @@ func overridden(set *logical.Set, project string, b []byte, name string) (*pantr
 //
 //	NOT-RUN gnu.org/gzip 1.15: open pantry/projects/gnu.org/gzip:
 //	                           no such file or directory
+//
+// ⛔ A STANDALONE OVERLAY RECIPE IS THE WHOLE RECIPE (go-zpkg/zpkb#514). One
+// that states its own `versions`, `distributable` and `build` — judged by
+// artifact.IsStandalone, the function `lint --require-standalone` uses — is
+// built alone: not the pantry's, not merged, and WITHOUT the logical
+// overrides, because a standalone recipe is ours entire and an override
+// describes an edit to upstream's. Its directory is the overlay's, where its
+// props and fixtures sit. A fragment takes the path above, unchanged.
 func LoadBuildRecipe(set *logical.Set, overlayDir, pantryDir, project string) (*pantry.Recipe, string, error) {
+	if over, ok, err := sideDoc(overlayDir, project); err != nil {
+		return nil, Dir(overlayDir, project), err
+	} else if ok && artifact.IsStandalone(over) {
+		r, err := Load(overlayDir, project)
+		return r, Dir(overlayDir, project), err
+	}
 	r, err := LoadOverridden(set, pantryDir, project)
 	if !errors.Is(err, ErrNoRecipe) || overlayDir == "" {
 		return r, Dir(pantryDir, project), err
@@ -132,7 +146,12 @@ func LoadBuildRecipe(set *logical.Set, overlayDir, pantryDir, project string) (*
 // upstream's, with the logical overrides applied. With a nil set it is
 // artifact.recipeDoc exactly, which is what a consumer resolves.
 //
-// Not the overlay preferred whole. That was right while every overlay entry
+// EXCEPT a STANDALONE overlay recipe (artifact.IsStandalone), which is
+// returned alone: no merge, no overrides (go-zpkg/zpkb#514). Upstream's twin
+// would otherwise lend it dependencies, build.dependencies, build.env keys and
+// a working-directory it never stated.
+//
+// For a FRAGMENT, not the overlay preferred whole. That was right while every overlay entry
 // was a full copy of an upstream recipe, and it broke the day they stopped
 // being: go-zpkg/recipes reduced its 183 entries to the keys they
 // change (go-zpkg/artifact#103), so reading one on its own gives a fragment.
@@ -156,6 +175,11 @@ func LoadMerged(set *logical.Set, overlayDir, pantryDir, project string) (*pantr
 	over, hasOver, err := sideDoc(overlayDir, project)
 	if err != nil {
 		return nil, err
+	}
+	// A standalone overlay recipe is the whole recipe, returned before the
+	// pantry is even read and without the logical overrides (go-zpkg/zpkb#514).
+	if hasOver && artifact.IsStandalone(over) {
+		return docRecipe(over, project)
 	}
 	base, hasBase, err := sideDoc(pantryDir, project)
 	if err != nil {
