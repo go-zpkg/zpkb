@@ -228,6 +228,17 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"project has a standalone recipe in this tree, because the loaders no longer apply it")
 	requireLive := fset.Bool("require-live-overrides", false,
 		"with --overrides: fail when an override is dead instead of warning")
+	// ⛔⛔ A BUILD SCRIPT THAT FETCHES A REMOTE ARTIFACT (go-zpkg/zpkb#487): see
+	// lintscriptfetch.go for what counts, what does not, and why. The ceiling
+	// bounds RECIPES whose BUILD fetches; test-block fetches are reported apart.
+	// Naming the ceiling is enough to switch the check on, so a lane cannot
+	// record a number nobody reads; --require-pinned-fetches alone is zero.
+	requirePinnedFetches := fset.Bool("require-pinned-fetches", false,
+		"fail a recipe whose build script fetches a remote artifact (curl, wget, git clone…) outside "+
+			"distributable and sources, where no digest can reach it")
+	maxScriptFetches := fset.Int("max-script-fetches", -1,
+		"the number of recipes whose build script still fetches a remote artifact (implies "+
+			"--require-pinned-fetches). More fails as a regression, FEWER fails as a ceiling to lower")
 	if err := fset.Parse(args); err != nil {
 		return 2
 	}
@@ -308,7 +319,9 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead []string
+	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead, fetching []string
+	checkFetches := *requirePinnedFetches || *maxScriptFetches >= 0
+	buildFetchLines, testFetchRecipes, testFetchLines := 0, 0, 0
 	for _, proj := range projects {
 		// The project's DIRECTORY rather than (dir, project): the loader that
 		// takes a pantry and a project joins `projects/` in, which is right for
@@ -335,6 +348,18 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		if overrideSet != nil && overrideSet.For(proj) != nil && len(missingEssentials(doc)) == 0 {
 			dead = append(dead, fmt.Sprintf("  %s: %s — %s", proj, overrideSet.Files[proj],
 				deadOverrideVerdict(overrideSet.For(proj), doc)))
+		}
+		if checkFetches {
+			bl, tl := scriptFetches(doc)
+			if len(bl) > 0 {
+				buildFetchLines += len(bl)
+				fetching = append(fetching, fmt.Sprintf("  %s: %d line(s) (%s): %s",
+					proj, len(bl), shapeSummary(bl), bl[0]))
+			}
+			if len(tl) > 0 {
+				testFetchRecipes++
+				testFetchLines += len(tl)
+			}
 		}
 		if u := shaNamesASignature(r.Distributable); u != "" {
 			signedSha = append(signedSha, fmt.Sprintf("  %s: sha = %q", proj, u))
@@ -425,6 +450,30 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"(go-zpkg/zpkb#514, #516). Carry the fix into the recipe, citing the override, "+
 			"and delete the override — or say in the recipe why it does not apply:\n", len(dead), root)
 		fmt.Fprintln(stderr, strings.Join(dead, "\n"))
+	}
+	if checkFetches {
+		fmt.Fprintf(stdout, "script fetches: %d recipe(s), %d line(s) in the build; %d recipe(s), "+
+			"%d line(s) in a test only counted apart\n",
+			len(fetching), buildFetchLines, testFetchRecipes, testFetchLines)
+		sort.Strings(fetching)
+	}
+	if *maxScriptFetches > len(fetching) {
+		fmt.Fprintf(stderr, "lint: %d recipe(s) fetch in their build script, and "+
+			"--max-script-fetches says %d: lower it to %d. A ceiling nobody lowers stops "+
+			"describing the tree, and then a regression hides in the slack\n",
+			len(fetching), *maxScriptFetches, len(fetching))
+		return 1
+	}
+	if len(fetching) > 0 {
+		fmt.Fprintf(stderr, "%d of %d recipe(s) fetch a remote artifact from inside the build "+
+			"script, outside distributable and sources, so no digest reaches it and the bytes "+
+			"shipped are whatever the host served (go-zpkg/zpkb#487). Pin it as a `sources` entry "+
+			"(extract = false for a plain file), or vendor it:\n", len(fetching), len(projects))
+		fmt.Fprintln(stderr, strings.Join(fetching, "\n"))
+		if *maxScriptFetches == len(fetching) {
+			fmt.Fprintf(stderr, "lint: at the stated ceiling of %d; each recipe pinned must "+
+				"lower it\n", *maxScriptFetches)
+		}
 	}
 	if len(notHCL) > 0 {
 		sort.Strings(notHCL)
@@ -517,6 +566,9 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// No tolerance and no ceiling, for the reason given where the flag is
 	// declared: this check is at zero already.
 	if len(notHCL) > 0 {
+		return 1
+	}
+	if len(fetching) > 0 && *maxScriptFetches != len(fetching) {
 		return 1
 	}
 	if *requireLive && len(dead) > 0 {
