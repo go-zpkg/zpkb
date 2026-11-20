@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/go-zpkg/artifact"
 	"github.com/go-zpkg/zpkb/build"
 	"github.com/go-zpkg/zpkb/buildscript"
 	"github.com/go-zpkg/zpkb/recipefile"
@@ -596,26 +597,15 @@ func unknownEnvRefs(script string, known map[string]bool) []string {
 	return out
 }
 
-var essentials = []string{"versions", "distributable", "build"}
-
-// missingEssentials names the essential keys a recipe document does not state,
-// in the order of `essentials` rather than map order so two runs over one tree
-// print the same line.
+// missingEssentials names the essential keys a recipe document does not state.
 //
-// `members` exempts a recipe entirely: a SET names a tree of packages by
-// constraint and has no source and no build of its own, so judging it by
-// `distributable` would report every set as a fragment.
+// ⛔ THE DEFINITION IS artifact.MissingEssentials, NOT A COPY OF IT
+// (go-zpkg/zpkb#514). "Standalone" decides what the factory builds and what a
+// consumer resolves, so lint, closure, the loaders here and artifact's
+// resolver must all call the one function; a second spelling is how they
+// would disagree about what a fragment is.
 func missingEssentials(doc map[string]any) []string {
-	if _, ok := doc["members"]; ok {
-		return nil
-	}
-	var miss []string
-	for _, k := range essentials {
-		if _, ok := doc[k]; !ok {
-			miss = append(miss, k)
-		}
-	}
-	return miss
+	return artifact.MissingEssentials(doc)
 }
 
 // lintProjects lists the project directories under root, by the recipe file
