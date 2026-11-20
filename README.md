@@ -266,6 +266,24 @@ sources = [
 | `strip-components` | leading path components dropped when an archive is unpacked; refused with `extract: false` |
 | `extract` | `false` copies the URL as one file (mode 0644; a script that needs it executable says so). Asked for, never inferred: an unknown archive extension still fails loudly, so a misspelt `.tar.gzz` is not silently staged as a file |
 
+`platforms` is optional and takes the recipe-level key's spelling: an OS
+(`linux`) or `os/arch` (`linux/x86-64`), one string or a list. An entry with
+`platforms` is fetched only when the build target matches; an entry without it
+is fetched everywhere, as before. If any entry is platform-restricted and none
+of them covers the target, the build is refused with a message naming the
+target. An unknown spelling is refused when the recipe is loaded. Provenance
+materials list only the entries actually fetched. This is how a per-host
+bootstrap compiler is pinned: one entry per host, each with its own digest.
+
+```hcl
+sources = [
+  { url = "https://go.dev/dl/go1.26.11.linux-amd64.tar.gz", sha256 = "...",
+    dest = ".bootstrap", "strip-components" = 1, platforms = ["linux/x86-64"] },
+  { url = "https://go.dev/dl/go1.26.11.darwin-arm64.tar.gz", sha256 = "...",
+    dest = ".bootstrap", "strip-components" = 1, platforms = ["darwin/aarch64"] },
+]
+```
+
 A plain file never overwrites a file already in the build directory. Sources
 are fetched after `distributable`, in the order listed, and each lands in the
 build's provenance as a material (URI and SHA-256) after the main source.
