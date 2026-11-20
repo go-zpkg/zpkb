@@ -665,15 +665,26 @@ func TestKeyByFingerprintReachesTheEnd(t *testing.T) {
 	}
 }
 
-// ⛔ TestKeyByFingerprintWhenTheNamedKeyCannotBeAssembled. This fixture was a
-// FAILED attempt at something else, and it is exactly the witness this branch
-// needed: ReadEntity keeps reading past the key packet looking for user ids and
-// subkeys, so garbage immediately after the WANTED key is read as part of it.
-// "the key is in the file and cannot be read" is a different problem from "the
-// key is not in the file", and the messages say so.
+// ⛔ TestKeyByFingerprintWhenTheNamedKeyCannotBeAssembled: "the key is in the
+// file and cannot be read" is a different problem from "the key is not in the
+// file", and the messages say so.
+//
+// ⚠ THE FIXTURE CHANGED, AND WHY IS WORTH KEEPING. It used to be a complete,
+// valid entity followed by the octets 0x99 0x7f 0xff — and it failed only
+// because go-crypto's ReadEntity read GREEDILY past the entity's end and choked
+// on what followed. The walk now ends an entity where the next primary key or a
+// framing error begins (RFC 9580 §10.1), so those octets are no longer part of
+// it and the valid key is returned — which is right, and is now asserted by
+// TestGarbageAfterACompleteEntityDoesNotSpoilIt below. The fixture here puts the
+// bad packet INSIDE the entity instead: the key packet, then a well-framed
+// signature packet of version 99, before any next key.
 func TestKeyByFingerprintWhenTheNamedKeyCannotBeAssembled(t *testing.T) {
 	key := testKey(t)
-	ring := append(binaryPublicKey(t, key), 0x99, 0x7f, 0xff)
+	var kp bytes.Buffer
+	if err := key.PrimaryKey.Serialize(&kp); err != nil {
+		t.Fatal(err)
+	}
+	ring := append(kp.Bytes(), 0xC2, 1, 99)
 	_, scanned, err := keyByFingerprint(ring, fmt.Sprintf("%X", key.PrimaryKey.Fingerprint))
 	if err == nil {
 		t.Fatal("an unassemblable key was returned")
@@ -683,6 +694,24 @@ func TestKeyByFingerprintWhenTheNamedKeyCannotBeAssembled(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is in the file and cannot be read") {
 		t.Errorf("the refusal must distinguish this from absence: %v", err)
+	}
+}
+
+// TestGarbageAfterACompleteEntityDoesNotSpoilIt is the old fixture of the test
+// above, asserting what is now true of it: octets after an entity's end are not
+// part of that entity, so a valid key followed by rubbish is still a valid key.
+// It is the same change that let the GNU keyring be read past its 402nd key —
+// there the rubbish sat in ANOTHER key's entity, here it sits after this one.
+func TestGarbageAfterACompleteEntityDoesNotSpoilIt(t *testing.T) {
+	key := testKey(t)
+	ring := append(binaryPublicKey(t, key), 0x99, 0x7f, 0xff)
+	want := fmt.Sprintf("%X", key.PrimaryKey.Fingerprint)
+	e, scanned, err := keyByFingerprint(ring, want)
+	if err != nil {
+		t.Fatalf("a complete entity followed by rubbish was refused: %v", err)
+	}
+	if got := fmt.Sprintf("%X", e.PrimaryKey.Fingerprint); got != want || scanned != 1 {
+		t.Errorf("found %s after %d key(s), want %s after 1", got, scanned, want)
 	}
 }
 
