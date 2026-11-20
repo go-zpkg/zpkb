@@ -587,52 +587,56 @@ func readKeyring(b []byte, wantFPR string) (openpgp.EntityList, int, error) {
 // assembled, so a key that cannot be assembled is simply not the answer rather
 // than an error.
 func keyByFingerprint(body []byte, wantFPR string) (*openpgp.Entity, int, error) {
-	r := packet.NewReader(bytes.NewReader(body))
 	scanned := 0
-	for {
-		p, err := r.Next()
+	for rest := body; ; {
+		// ⛔⛔ THE WALK LOCATES PACKETS BY THEIR HEADERS AND PARSES ONLY THE
+		// ONES IT USES (see pktframe.go). It used go-crypto's packet.Reader
+		// for every packet, and that reader cannot be resynchronised after a
+		// packet it refuses — an earlier attempt to `continue` past one spun
+		// 1025 times. So the walk STOPPED at the first such packet: against
+		// the GNU keyring that was the 402nd primary key, on "Cannot have
+		// multiple embedded signatures", and the 212 keys gpg reads after it
+		// (614 in all, measured 2026-11-20) were unreachable. A header states
+		// its body's length, so the next packet is found without parsing this
+		// one, and the walk now always advances by at least two octets.
+		p, next, err := nextPacket(rest)
 		if err == io.EOF {
 			return nil, scanned, fmt.Errorf("fetch: no key with fingerprint %s in the key "+
 				"file (%d primary key(s) walked) — check the fingerprint, and that this is "+
 				"the file you meant", wantFPR, scanned)
 		}
 		if err != nil {
-			// ⛔⛔ STOP, DO NOT CONTINUE. An earlier version of this loop
-			// skipped and carried on, and that is the same defect that made the
-			// first attempt at tolerant parsing spin 1025 times: a
-			// packet.Reader cannot be resynchronised after a tag it refuses, so
-			// `continue` either repeats the error forever or reads the rest of
-			// the file as one packet's payload. A stream this cannot parse is a
-			// stream it cannot search, and saying so is the honest answer.
-			//
-			// This is not the GNU keyring's case, which is why that one works:
-			// there the PACKETS all read and one ENTITY would not assemble, and
-			// entities are assembled here only for the key that matched.
-			// Measured 2026-11-08: 326 primary keys walked, none refused.
-			// ⛔⛔ AND IT MUST SAY BOTH THINGS. This used to report only the
-			// stream break, which reads as "your keyring is broken" — and on
-			// 2026-11-09 that is exactly what I concluded, twice, when the real
-			// answer was "the selector you gave matched none of the keys I could
-			// read". The GNU keyring breaks at its 402nd primary key, so EVERY
-			// unmatched search against it ends here rather than at EOF, and the
-			// message that blames the file is the one a reader always gets.
+			// ⛔⛔ AND IT MUST STILL SAY BOTH THINGS. This used to report only
+			// the stream break, which reads as "your keyring is broken" — on
+			// 2026-11-09 that is exactly what I concluded, twice, when the
+			// answer was "the selector matched none of the keys I could read".
+			// A FRAMING error is now the only way to get here: a header that
+			// states no usable length, which nothing can step past.
 			return nil, scanned, fmt.Errorf("fetch: no key matching %s among the %d primary "+
-				"key(s) that could be read, and the packet stream stops being readable after "+
-				"them: %w — so either the key is beyond that point in this file, or the "+
+				"key(s) that could be located, and the packet framing stops being readable "+
+				"after them: %w — so either the key is beyond that point in this file, or the "+
 				"selector is wrong", wantFPR, scanned, err)
 		}
-		pk, isKey := p.(*packet.PublicKey)
-		if !isKey || pk.IsSubkey {
+		if p.tag != tagPublicKey {
+			rest = next
 			continue
 		}
+		// Only this packet is parsed, to read its fingerprint. A primary key
+		// go-crypto cannot parse is not the answer to any selector, so it is
+		// counted and passed, exactly as a key of the wrong fingerprint is.
 		scanned++
-		if !keyMatches(fmt.Sprintf("%X", pk.Fingerprint), wantFPR) {
+		kp, perr := packet.NewReader(bytes.NewReader(p.raw)).Next()
+		pk, isKey := kp.(*packet.PublicKey)
+		if perr != nil || !isKey || !keyMatches(fmt.Sprintf("%X", pk.Fingerprint), wantFPR) {
+			rest = next
 			continue
 		}
-		// Found it. Hand the key packet back so ReadEntity sees the entity from
-		// its start, with its user ids, self-signatures and subkeys.
-		r.Unread(p)
-		e, err := openpgp.ReadEntity(r)
+		// Found it. The entity runs from this key to the next primary key
+		// (RFC 9580 §10.1), and only those octets are assembled — so a packet
+		// go-crypto would refuse in SOME OTHER key's entity can no longer stop
+		// this one being read.
+		end := len(p.raw) + entityLength(next)
+		e, err := openpgp.ReadEntity(packet.NewReader(bytes.NewReader(rest[:end])))
 		if err != nil {
 			return nil, scanned, fmt.Errorf("fetch: the key %s is in the file and cannot be "+
 				"read: %w", wantFPR, err)
