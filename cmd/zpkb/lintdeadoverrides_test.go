@@ -120,3 +120,30 @@ func TestLintRefusesAnUnreadableOverride(t *testing.T) {
 		t.Fatalf("rc=%d, want 1", rc)
 	}
 }
+
+// ⛔ THE VERDICT MUST NOT EDIT THE RECIPE IT JUDGES: Apply works in place, and
+// the same document goes on to the other checks. A list is where a shallow copy
+// would share storage, so the copy is checked against a list.
+func TestCloneDocSharesNothingWithTheOriginal(t *testing.T) {
+	orig := map[string]any{"build": map[string]any{"script": []any{"make", map[string]any{"run": "x"}}}}
+	cp, _ := cloneDoc(orig).(map[string]any)
+	l := cp["build"].(map[string]any)["script"].([]any)
+	l[0] = "changed"
+	l[1].(map[string]any)["run"] = "changed"
+	o := orig["build"].(map[string]any)["script"].([]any)
+	if o[0] != "make" || o[1].(map[string]any)["run"] != "x" {
+		t.Fatalf("the copy shares storage with the original: %v", o)
+	}
+}
+
+// A premise that is not there is its own verdict: "fix MISSING" would send an
+// author to add a line the override never described.
+func TestLintDeadOverrideNamesAGonePremise(t *testing.T) {
+	dir := lintTree(t, map[string]string{"acme.org/package.hcl": standaloneAcme})
+	ov := deadOverrideDir(t, map[string]string{"acme.org.hcl": "project = \"acme.org\"\nwhy = \"x\"\n" +
+		"edits = [ { path = \"build.script\", from = \"configure --nope\", to = \"configure --yes\" } ]\n"})
+	_, _, errb := lint(t, "--dir", dir, "--overrides", ov)
+	if !strings.Contains(errb, "acme.org.hcl — premise gone in the recipe: build.script") {
+		t.Fatalf("the verdict must say the premise is gone:\n%s", errb)
+	}
+}
