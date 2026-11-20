@@ -860,6 +860,11 @@ func pinnedDigest(v any, version string) (string, error) {
 	}
 }
 
+// PinnedDigest is pinnedDigest for callers outside the package: `zpkb lint
+// --check-newest-pinned` asks the builder's own function whether a version is
+// pinned, rather than re-stating its rules.
+func PinnedDigest(v any, version string) (string, error) { return pinnedDigest(v, version) }
+
 func sortedKeys(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

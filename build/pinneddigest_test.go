@@ -143,3 +143,10 @@ func TestSourcesOfResolvesThePinForTheVersionBeingBuilt(t *testing.T) {
 		t.Error("sourcesOf built an unpinned version against a recipe that pins")
 	}
 }
+
+// PinnedDigest is the exported spelling `zpkb lint --check-newest-pinned` calls.
+func TestPinnedDigestIsTheBuildersOwn(t *testing.T) {
+	if _, err := PinnedDigest(map[string]any{"1.0": digestA}, "2.0"); err == nil {
+		t.Fatal("an unpinned version must be refused through the exported spelling too")
+	}
+}

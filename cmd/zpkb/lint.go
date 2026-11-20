@@ -228,6 +228,12 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"project has a standalone recipe in this tree, because the loaders no longer apply it")
 	requireLive := fset.Bool("require-live-overrides", false,
 		"with --overrides: fail when an override is dead instead of warning")
+	// ⛔⛔ NETWORK-USING, SO A FLAG. See newestPinGaps: a recipe that pins
+	// sha256 digests while `versions:` resolves a newer, unpinned version is a
+	// default build that is a refusal (3 times on 2026-11-20).
+	checkNewestPinned := fset.Bool("check-newest-pinned", false,
+		"resolve each pinning recipe's versions as the builder does (network) and fail one "+
+			"whose NEWEST version has no sha256 pin")
 	// ⛔⛔ A BUILD SCRIPT THAT FETCHES A REMOTE ARTIFACT (go-zpkg/zpkb#487): see
 	// lintscriptfetch.go for what counts, what does not, and why. The ceiling
 	// bounds RECIPES whose BUILD fetches; test-block fetches are reported apart.
@@ -319,7 +325,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead, fetching []string
+	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead, fetching, unpinnedNewest []string
 	checkFetches := *requirePinnedFetches || *maxScriptFetches >= 0
 	buildFetchLines, testFetchRecipes, testFetchLines := 0, 0, 0
 	for _, proj := range projects {
@@ -348,6 +354,11 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		if overrideSet != nil && overrideSet.For(proj) != nil && len(missingEssentials(doc)) == 0 {
 			dead = append(dead, fmt.Sprintf("  %s: %s — %s", proj, overrideSet.Files[proj],
 				deadOverrideVerdict(overrideSet.For(proj), doc)))
+		}
+		if *checkNewestPinned {
+			for _, g := range newestPinGaps(r.Versions, r.Distributable, r.Sources) {
+				unpinnedNewest = append(unpinnedNewest, fmt.Sprintf("  %s: %s", proj, g))
+			}
 		}
 		if checkFetches {
 			bl, tl := scriptFetches(doc)
@@ -439,6 +450,14 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"(go-zpkg/zpkb#494). The names the builder does provide come from "+
 			"buildscript.ExportedNames() and build.PassThroughEnv:\n", len(unknownEnv), len(projects))
 		fmt.Fprintln(stderr, strings.Join(unknownEnv, "\n"))
+	}
+	if len(unpinnedNewest) > 0 {
+		sort.Strings(unpinnedNewest)
+		fmt.Fprintf(stderr, "%d pin(s) of recipes whose NEWEST resolved version has no sha256 pin: "+
+			"a consumer asking \"*\" gets that version and the builder refuses it, because a recipe "+
+			"that pins is fail-closed. Pin the newest, or stop `versions:` resolving it:\n",
+			len(unpinnedNewest))
+		fmt.Fprintln(stderr, strings.Join(unpinnedNewest, "\n"))
 	}
 	if overrideSet != nil {
 		fmt.Fprintf(stdout, "%d override(s) read from %s\n", len(overrideSet.Projects()), *overridesDir)
@@ -582,6 +601,9 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// tree this was written for reports zero once go-zpkg/recipes#138
 	// is in.
 	if len(unknownEnv) > 0 {
+		return 1
+	}
+	if len(unpinnedNewest) > 0 {
 		return 1
 	}
 	return 0
