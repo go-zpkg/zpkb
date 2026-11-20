@@ -909,9 +909,20 @@ func splitPlatform(p string) (osn, arch string, ok bool) {
 // also what `bk publish` emits for an artifact this process did not build: it does
 // not know what the source was, and inventing a URI from the recipe would
 // attest a guess.
+//
+// Every entry of the recipe's `sources:` is a material too, after the main one
+// and in recipe order: they are bytes the artifact was built from just as much,
+// and the only ones in the record that a recipe pinned by digest.
 func materialsOf(src build.SourceRef) []provenance.Material {
-	if src.SHA256 == "" && src.Commit == "" {
-		return nil
+	var out []provenance.Material
+	if src.SHA256 != "" || src.Commit != "" {
+		out = append(out, provenance.Material{URI: src.URI, SHA256: src.SHA256, GitCommit: src.Commit})
 	}
-	return []provenance.Material{{URI: src.URI, SHA256: src.SHA256, GitCommit: src.Commit}}
+	for _, x := range src.Extra {
+		if x.SHA256 == "" {
+			continue
+		}
+		out = append(out, provenance.Material{URI: x.URI, SHA256: x.SHA256})
+	}
+	return out
 }

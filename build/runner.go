@@ -42,6 +42,10 @@ type Runner struct {
 	// archive's SHA-256, a clone's commit. See SourceRef.
 	Fetch    func(url, dest string, strip int) (sha256 string, err error)
 	FetchGit func(repo, ref, dest string) (commit string, err error)
+	// FetchFile COPIES a URL into dest unextracted, for a `sources:` entry with
+	// `extract: false` or a distributable that is one plain file. It reports the
+	// digest of what arrived, like Fetch.
+	FetchFile func(url, dest string) (sha256 string, err error)
 	// FetchSHA reads the checksum a recipe's `sha:` URL declares for an archive.
 	// Nil disables verification — what a test that does not care about it wants;
 	// the real runner always sets it.
@@ -122,6 +126,10 @@ type SourceRef struct {
 	URI    string // the candidate that actually answered
 	SHA256 string // lowercase hex, for an archive
 	Commit string // for a git source
+	// Extra is what the recipe's `sources:` fetched, in the order it lists them:
+	// every one of them, since none is a fallback for another. Only the
+	// top-level SourceRef carries any.
+	Extra []SourceRef
 }
 
 // Result reports what a build produced.
@@ -372,6 +380,8 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 			var got string
 			if src.git {
 				got, fetchErr = r.FetchGit(src.url, src.ref, paths.Build)
+			} else if src.file {
+				got, fetchErr = r.FetchFile(src.url, paths.Build)
 			} else {
 				got, fetchErr = r.Fetch(src.url, paths.Build, src.strip)
 			}
@@ -413,6 +423,40 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 		if fetchErr != nil {
 			return res, fmt.Errorf("fetch: %w", fetchErr)
 		}
+		if err := r.Touch(paths.Build); err != nil {
+			return res, err
+		}
+	}
+
+	// ⛔ `sources:` IS NOT `distributable:`'s LIST FORM. That list is MIRRORS of
+	// one source — the loop above stops at the first that answers — so it could
+	// never have carried a second artifact. Here EVERY entry is fetched, each
+	// pinned, and any failure is the build's failure: a recipe that names a patch
+	// or a second tarball needs it, and building without it would produce an
+	// artifact that looks identical to a complete one.
+	extras, err := extraSourcesOf(recipe.Sources, version, tag)
+	if err != nil {
+		return res, err
+	}
+	for _, src := range extras {
+		dst := filepath.Join(paths.Build, src.dest)
+		var got string
+		var fetchErr error
+		if src.file {
+			got, fetchErr = r.FetchFile(src.url, dst)
+		} else {
+			got, fetchErr = r.Fetch(src.url, dst, src.strip)
+		}
+		if fetchErr != nil {
+			return res, fmt.Errorf("fetch source %s: %w", src.url, fetchErr)
+		}
+		if err := r.verifyChecksum(src, got); err != nil {
+			return res, err
+		}
+		logf("fetched source %s → %s", src.url, src.dest)
+		res.Source.Extra = append(res.Source.Extra, SourceRef{URI: src.url, SHA256: got})
+	}
+	if len(extras) > 0 {
 		if err := r.Touch(paths.Build); err != nil {
 			return res, err
 		}
@@ -610,6 +654,13 @@ type source struct {
 	// sha256 is the digest the RECIPE pins, already resolved for the version
 	// being built. Empty when the recipe pins nothing.
 	sha256 string
+	// file is a plain file to be copied, not an archive to be unpacked: the
+	// recipe said `extract: false`. It is asked for, never inferred from an
+	// unrecognised extension, so a misspelt `.tar.gzz` still fails loudly.
+	file bool
+	// dest is the directory, relative to the build directory, a `sources:`
+	// entry lands in. "." for the main distributable.
+	dest string
 }
 
 // oneSource derives a single fetch source from a scalar (string) or map-form
@@ -643,6 +694,29 @@ func oneSource(dist any, version string, toks []moustache.Token) (source, error)
 		}
 		if s.url == "" {
 			return s, fmt.Errorf("distributable has no url")
+		}
+		if raw, present := d["extract"]; present {
+			ex, ok := raw.(bool)
+			if !ok {
+				return s, fmt.Errorf("%s: extract must be true or false, got %T", s.url, raw)
+			}
+			s.file = !ex
+		}
+		if s.file {
+			// ⛔ A PLAIN FILE HAS NO STRUCTURE TO TELL IT FROM AN ERROR PAGE.
+			// An archive that is really an HTML 404 fails in the decompressor; a
+			// copied file that is one looks exactly like a short file. So the
+			// digest is not optional here, and options that mean nothing for a
+			// copied file are refused rather than silently ignored.
+			if s.git {
+				return s, fmt.Errorf("%s: extract: false and ref cannot be combined — a git checkout is a tree", s.url)
+			}
+			if _, has := d["strip-components"]; has {
+				return s, fmt.Errorf("%s: strip-components has no meaning with extract: false", s.url)
+			}
+			if s.sha256 == "" {
+				return s, fmt.Errorf("%s: a plain file (extract: false) must pin a sha256", s.url)
+			}
 		}
 		return s, nil
 	default:
@@ -683,6 +757,61 @@ func sourcesOf(dist any, version, tag string) ([]source, error) {
 		return nil, err
 	}
 	return []source{s}, nil
+}
+
+// extraSourcesOf derives the recipe's `sources:`: a list in which EVERY entry
+// is fetched. Unlike a list-form distributable (mirrors of one source), no entry
+// stands in for another.
+//
+// Each entry must be a map carrying a `sha256` — the string shorthand is
+// refused because it has nowhere to put one, which is the whole point of the
+// key — and may carry `strip-components`, `dest` (a directory relative to the
+// build directory, default ".") and `extract: false` for a plain file. A git
+// `ref` is refused: a commit is not a hash of bytes, so it could not be pinned.
+func extraSourcesOf(v any, version, tag string) ([]source, error) {
+	if v == nil {
+		return nil, nil
+	}
+	lst, ok := v.([]any)
+	if !ok || len(lst) == 0 {
+		return nil, fmt.Errorf("sources must be a non-empty list, got %T", v)
+	}
+	toks := moustache.Version(version, "version")
+	if tag == "" {
+		tag = version
+	}
+	toks = append(toks, moustache.Token{From: "version.tag", To: tag})
+	out := make([]source, 0, len(lst))
+	for i, e := range lst {
+		d, ok := e.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("sources[%d] must be a map with url and sha256, got %T", i, e)
+		}
+		s, err := oneSource(d, version, toks)
+		if err != nil {
+			return nil, fmt.Errorf("sources[%d]: %w", i, err)
+		}
+		if s.git {
+			return nil, fmt.Errorf("sources[%d] %s: a git ref cannot be pinned by a sha256, so it is not a source", i, s.url)
+		}
+		if s.sha256 == "" {
+			return nil, fmt.Errorf("sources[%d] %s: sha256 is required — an unpinned extra source is the defect this key exists to remove", i, s.url)
+		}
+		s.dest = "."
+		if raw, present := d["dest"]; present {
+			ds, ok := raw.(string)
+			if !ok {
+				return nil, fmt.Errorf("sources[%d] %s: dest must be a string, got %T", i, s.url, raw)
+			}
+			ds = moustache.Apply(ds, toks)
+			if !filepath.IsLocal(ds) {
+				return nil, fmt.Errorf("sources[%d] %s: dest %q must be a directory inside the build directory", i, s.url, ds)
+			}
+			s.dest = ds
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // hex64 is a lowercase SHA-256 in hex, which is the only shape a pinned

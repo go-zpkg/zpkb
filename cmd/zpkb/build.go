@@ -138,6 +138,7 @@ func realBuildRunner(zpkxBin string) *build.Runner {
 		ResolveVersion:  versions.Resolve,
 		Fetch:           fetch.Fetch,
 		FetchGit:        fetch.FetchGit,
+		FetchFile:       fetch.FetchFile,
 		FetchSHA:        fetch.DeclaredSHA256,
 		Touch:           build.TouchAutotools,
 		Run:             runBash,

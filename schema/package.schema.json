@@ -20,6 +20,13 @@
         { "type": "array", "items": { "oneOf": [ { "type": "string" }, { "$ref": "#/$defs/distributableObject" } ] } }
       ]
     },
+    "sources": {
+      "description": "ADDITIONAL artifacts the build needs — a second tarball, a patch, a signature — as a list in which EVERY entry is fetched and pinned. Not the list form of `distributable`, which is fallback MIRRORS of one source (the first that answers wins). Each entry needs a sha256; a digest mismatch fails the build. Archives are unpacked into `dest`, plain files (`extract: false`) are copied there.",
+      "oneOf": [
+        { "type": "null" },
+        { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sourceObject" } }
+      ]
+    },
     "versions": {
       "description": "How available versions are discovered: an explicit list, a single source object, or an array of source objects (multiple sources).",
       "oneOf": [
@@ -149,7 +156,21 @@
             }
           ]
         },
-        "strip-components": { "type": ["integer", "string"], "description": "leading path components to strip on extract" }
+        "strip-components": { "type": ["integer", "string"], "description": "leading path components to strip on extract" },
+        "extract": { "type": "boolean", "description": "false COPIES the URL as one plain file instead of unpacking an archive (a .pem, a .patch). Asked for, never inferred from an unknown extension, so a misspelt archive suffix still fails loudly. Requires sha256; refuses strip-components and ref." }
+      }
+    },
+    "sourceObject": {
+      "description": "One entry of `sources`. Closed: a key nothing implements is refused.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "sha256"],
+      "properties": {
+        "url": { "type": "string", "description": "what to fetch; supports {{version}} moustaches" },
+        "sha256": { "$ref": "#/$defs/distributableObject/properties/sha256" },
+        "strip-components": { "type": ["integer", "string"], "description": "leading path components to strip when an archive is unpacked; refused with extract: false" },
+        "dest": { "type": "string", "description": "directory, relative to the build directory, the entry lands in (default: the build directory itself). A plain file keeps the last segment of the URL's path as its name, and never overwrites a file already there." },
+        "extract": { "type": "boolean", "description": "false COPIES the URL as one plain file instead of unpacking an archive. Default true." }
       }
     },
     "stringOrArray": {

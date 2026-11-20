@@ -70,6 +70,45 @@ func TestHCLEquivalentToYAML(t *testing.T) {
 	}
 }
 
+// `sources` written as an HCL list of objects decodes to the same Recipe as the
+// YAML list, so the example in the docs is the one the builder reads.
+func TestHCLSourcesEquivalentToYAML(t *testing.T) {
+	const digest = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+	fromHCL, err := Parse([]byte(`
+distributable {
+  url = "https://example.org/x-{{version}}.tar.gz"
+}
+sources = [
+  { url = "https://example.org/tk.tar.gz", sha256 = "`+digest+`", dest = "tk", "strip-components" = 1 },
+  { url = "https://example.org/fix.patch", sha256 = "`+digest+`", extract = false },
+]
+`), "package.hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromYAML, err := pantry.Parse([]byte(`
+distributable:
+  url: https://example.org/x-{{version}}.tar.gz
+sources:
+  - url: https://example.org/tk.tar.gz
+    sha256: ` + digest + `
+    dest: tk
+    strip-components: 1
+  - url: https://example.org/fix.patch
+    sha256: ` + digest + `
+    extract: false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fromHCL, fromYAML) {
+		t.Errorf("differ:\n hcl=%#v\nyaml=%#v", fromHCL, fromYAML)
+	}
+	if lst, ok := fromHCL.Sources.([]any); !ok || len(lst) != 2 {
+		t.Errorf("Sources = %#v", fromHCL.Sources)
+	}
+}
+
 func TestParseSyntaxError(t *testing.T) {
 	if _, err := Parse([]byte("build { script = "), "x.hcl"); err == nil || !strings.Contains(err.Error(), "parse") {
 		t.Errorf("expected parse error, got %v", err)
