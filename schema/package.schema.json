@@ -170,8 +170,19 @@
         "sha256": { "$ref": "#/$defs/distributableObject/properties/sha256" },
         "strip-components": { "type": ["integer", "string"], "description": "leading path components to strip when an archive is unpacked; refused with extract: false" },
         "dest": { "type": "string", "description": "directory, relative to the build directory, the entry lands in (default: the build directory itself). A plain file keeps the last segment of the URL's path as its name, and never overwrites a file already there." },
-        "extract": { "type": "boolean", "description": "false COPIES the URL as one plain file instead of unpacking an archive. Default true." }
+        "extract": { "type": "boolean", "description": "false COPIES the URL as one plain file instead of unpacking an archive. Default true." },
+        "platforms": {
+          "description": "build targets this entry is fetched for, spelled as the recipe-level `platforms`: an OS (linux) or os/arch (linux/x86-64), one or a list. Absent = every target. A target no restricted entry covers is refused.",
+          "oneOf": [
+            { "$ref": "#/$defs/sourcePlatform" },
+            { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sourcePlatform" } }
+          ]
+        }
       }
+    },
+    "sourcePlatform": {
+      "type": "string",
+      "pattern": "^((darwin|linux|windows)(/(x86-64|aarch64|s390x))?|(freebsd|netbsd|openbsd)(/x86-64)?|wasip1(/wasm)?)$"
     },
     "stringOrArray": {
       "oneOf": [

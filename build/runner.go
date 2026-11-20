@@ -438,6 +438,10 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 	if err != nil {
 		return res, err
 	}
+	extras, err = selectSources(extras, tgt.Platform, tgt.Arch)
+	if err != nil {
+		return res, err
+	}
 	for _, src := range extras {
 		dst := filepath.Join(paths.Build, src.dest)
 		var got string
@@ -661,6 +665,9 @@ type source struct {
 	// dest is the directory, relative to the build directory, a `sources:`
 	// entry lands in. "." for the main distributable.
 	dest string
+	// platforms is the raw `platforms:` of a `sources:` entry, in the recipe-level
+	// key's spelling (see pantry.Supports). nil means every platform.
+	platforms any
 }
 
 // oneSource derives a single fetch source from a scalar (string) or map-form
@@ -797,6 +804,12 @@ func extraSourcesOf(v any, version, tag string) ([]source, error) {
 		if s.sha256 == "" {
 			return nil, fmt.Errorf("sources[%d] %s: sha256 is required — an unpinned extra source is the defect this key exists to remove", i, s.url)
 		}
+		if raw, present := d["platforms"]; present && raw != nil {
+			if err := checkSourcePlatforms(raw); err != nil {
+				return nil, fmt.Errorf("sources[%d] %s: %w", i, s.url, err)
+			}
+			s.platforms = raw
+		}
 		s.dest = "."
 		if raw, present := d["dest"]; present {
 			ds, ok := raw.(string)
@@ -810,6 +823,62 @@ func extraSourcesOf(v any, version, tag string) ([]source, error) {
 			s.dest = ds
 		}
 		out = append(out, s)
+	}
+	return out, nil
+}
+
+// checkSourcePlatforms refuses a `platforms:` of a `sources:` entry that names
+// no machine the builder knows: an unknown spelling would otherwise match
+// nothing, and the entry would be skipped on every host without a word.
+// The grammar is the recipe-level key's (a string or a list of `os` or
+// `os/arch`), checked against the one vocabulary in package target.
+func checkSourcePlatforms(v any) error {
+	var entries []any
+	switch x := v.(type) {
+	case string:
+		entries = []any{x}
+	case []any:
+		entries = x
+	default:
+		return fmt.Errorf("platforms must be a string or a list of strings, got %T", v)
+	}
+	if len(entries) == 0 {
+		return fmt.Errorf("platforms is an empty list, which would skip the entry everywhere")
+	}
+	for _, e := range entries {
+		s, ok := e.(string)
+		if !ok {
+			return fmt.Errorf("platforms entry %v is not a string", e)
+		}
+		osn, arch, hasArch := strings.Cut(strings.TrimSpace(s), "/")
+		if !target.IsPlatform(osn) || (hasArch && !target.IsPair(osn, arch)) {
+			return fmt.Errorf("platforms entry %q is not a known platform (want an OS such as linux, or os/arch such as linux/x86-64)", s)
+		}
+	}
+	return nil
+}
+
+// selectSources keeps the `sources:` entries that apply to the target. An entry
+// with no `platforms` applies everywhere. When some entries are restricted and
+// NONE of them covers the target the build is refused — a bootstrap archive
+// for another host is not a substitute for the one this host needs, and going
+// on without it fails later, somewhere unrecognisable.
+func selectSources(all []source, platform, arch string) ([]source, error) {
+	var out []source
+	restricted, covered := 0, 0
+	for _, s := range all {
+		if s.platforms == nil {
+			out = append(out, s)
+			continue
+		}
+		restricted++
+		if pantry.Supports(&pantry.Recipe{Platforms: s.platforms}, platform, arch) {
+			covered++
+			out = append(out, s)
+		}
+	}
+	if restricted > 0 && covered == 0 {
+		return nil, fmt.Errorf("sources: no platform-restricted entry covers the target %s/%s", platform, arch)
 	}
 	return out, nil
 }
