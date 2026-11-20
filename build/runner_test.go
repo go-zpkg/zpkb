@@ -64,6 +64,7 @@ func okRunner(project string, tgt target.Target) *Runner {
 		ResolveVersion: func(any, string) (string, string, error) { return "1.2.3", "v1.2.3", nil },
 		Fetch:          func(string, string, int) (string, error) { return "", nil },
 		FetchGit:       func(string, string, string) (string, error) { return "", nil },
+		FetchFile:      func(string, string) (string, error) { return "", nil },
 		Touch:          func(string) error { return nil },
 		FixUp:          func(fixup.Options) error { return nil },
 		WriteArtifact:  func(_, _, _, _, _, out string) (string, error) { return filepath.Join(out, "b.tar.gz"), nil },

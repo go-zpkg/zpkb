@@ -234,6 +234,53 @@ build {
 provides = ["bin/curl", "bin/curl-config"]
 ```
 
+## Pinning every artifact a build needs: `sources`
+
+A build script that runs `curl` fetches bytes nothing pins. `sources` is the
+place for them: a list in which **every** entry is fetched, each with a
+mandatory `sha256`, and a digest mismatch (or a missing `sha256`) fails the
+build.
+
+```hcl
+distributable {
+  url              = "https://downloads.sourceforge.net/project/tcl/Tcl/{{version}}/tcl{{version}}-src.tar.gz"
+  strip-components = 1
+}
+sources = [
+  # an archive: unpacked into dest, relative to the build directory
+  { url = "https://downloads.sourceforge.net/project/tcl/Tcl/{{version}}/tk{{version}}-src.tar.gz",
+    sha256 = { "9.0.3" = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23" },
+    dest = "tk", "strip-components" = 1 },
+  # a plain file: copied, not unpacked, under the last segment of the URL's path
+  { url = "https://example.org/fix-themechanged-error.patch",
+    sha256 = "cc0b4e42510d49c6decd464123ecf3b14ae9b47f9b4ed2ee64893e2d6520a264",
+    dest = "patches", extract = false },
+]
+```
+
+| key | meaning |
+|---|---|
+| `url` | required; `{{version}}` moustaches apply |
+| `sha256` | required; a digest, or a map version → digest (fail-closed: a version absent from the map is refused), as for `distributable` |
+| `dest` | directory relative to the build directory, default `.`; absolute paths and `..` are refused |
+| `strip-components` | leading path components dropped when an archive is unpacked; refused with `extract: false` |
+| `extract` | `false` copies the URL as one file (mode 0644; a script that needs it executable says so). Asked for, never inferred: an unknown archive extension still fails loudly, so a misspelt `.tar.gzz` is not silently staged as a file |
+
+A plain file never overwrites a file already in the build directory. Sources
+are fetched after `distributable`, in the order listed, and each lands in the
+build's provenance as a material (URI and SHA-256) after the main source.
+
+**`distributable`'s list form is unchanged: it is fallback mirrors of ONE
+source.** The entries are tried in order and the first that answers wins, so it
+cannot carry a second artifact — use `sources` for that. `distributable`
+itself accepts `extract = false` too, for a package that is one plain file
+(a CA bundle): `sha256` is then required, and `strip-components` and `ref` are
+refused.
+
+Not covered: `sources` takes no git `ref` (a commit is not a hash of bytes),
+and an unpinned `curl` in a build script is still not detected: refusing those is the lint
+asked for in go-zpkg/zpkb#487. (The digests above are illustrative.)
+
 ## Why
 
 Completes the pure-Go [`go-zpkg`](https://github.com/go-zpkg) family (artifact / zpkm /

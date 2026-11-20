@@ -58,6 +58,14 @@ type Recipe struct {
 	// knows the other, and the resolver already handles it.
 	Members map[string]any `yaml:"members"`
 
+	// Sources are ADDITIONAL artifacts the build needs — a second tarball, a
+	// patch, a signature — each pinned by a sha256. EVERY entry is fetched,
+	// which is what `distributable`'s list form (fallback mirrors of one source)
+	// cannot express. `omitempty` is load-bearing: spec.hashRecipes marshals the
+	// whole Recipe, and a bare key would move the lock spec hash of every
+	// recipe that has none.
+	Sources any `yaml:"sources" json:",omitempty"`
+
 	DisplayName string `yaml:"display-name"`
 	Summary     string `yaml:"summary"`
 	Description string `yaml:"description"`

@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	neturl "net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -69,34 +71,11 @@ func Fetch(url, destDir string, stripComponents int) (string, error) {
 	if kind == "" {
 		return "", fmt.Errorf("fetch: unknown archive extension in %q", url)
 	}
-	// Download to a temp file FIRST, resumably: a truncated stream cannot be
-	// recovered once the extractor has begun consuming it.
-	path, err := download(url)
+	path, digest, err := fetchToTemp(url)
 	if err != nil {
 		return "", err
 	}
 	defer osRemove(path)
-	digest, err := sha256File(path)
-	if err != nil {
-		return "", fmt.Errorf("fetch: digest %s: %w", url, err)
-	}
-	// Asked before the mirror is told, so a mismatch refuses the bytes rather
-	// than recording them as the new truth.
-	if Pin != nil {
-		if err := Pin(url, digest); err != nil {
-			return "", err
-		}
-	}
-	// The one moment the bytes exist on disk with their digest known. A source
-	// mirror is populated HERE or not at all: the caller sees only the digest,
-	// and the temp file is gone the moment this function returns.
-	//
-	// Best-effort by construction. A build that already holds the bytes it
-	// needs must not fail because a registry was unreachable; the mirror is for
-	// the NEXT rebuild, not this one. Mirror reports its own trouble.
-	if Mirror != nil {
-		Mirror(path, digest, url)
-	}
 	body, err := osOpen(path)
 	if err != nil {
 		return digest, fmt.Errorf("fetch: open %s: %w", path, err)
@@ -139,6 +118,102 @@ func Fetch(url, destDir string, stripComponents int) (string, error) {
 		}
 		return digest, wrapExtract(extractZip(data, destDir, stripComponents), "zip", url, head)
 	}
+}
+
+// fetchToTemp is the part of a fetch that does not care what the bytes are:
+// download to a temp file, digest it, ask Pin, tell Mirror. Fetch and FetchFile
+// share it so a single file is held to exactly the controls an archive is.
+func fetchToTemp(url string) (path, digest string, err error) {
+	// Download to a temp file FIRST, resumably: a truncated stream cannot be
+	// recovered once the extractor has begun consuming it.
+	path, err = download(url)
+	if err != nil {
+		return "", "", err
+	}
+	digest, err = sha256File(path)
+	if err != nil {
+		osRemove(path)
+		return "", "", fmt.Errorf("fetch: digest %s: %w", url, err)
+	}
+	// Asked before the mirror is told, so a mismatch refuses the bytes rather
+	// than recording them as the new truth.
+	if Pin != nil {
+		if err := Pin(url, digest); err != nil {
+			osRemove(path)
+			return "", "", err
+		}
+	}
+	// The one moment the bytes exist on disk with their digest known. A source
+	// mirror is populated HERE or not at all: the caller sees only the digest,
+	// and the temp file is gone the moment the caller returns.
+	//
+	// Best-effort by construction. A build that already holds the bytes it
+	// needs must not fail because a registry was unreachable; the mirror is for
+	// the NEXT rebuild, not this one. Mirror reports its own trouble.
+	if Mirror != nil {
+		Mirror(path, digest, url)
+	}
+	return path, digest, nil
+}
+
+// FetchFile downloads url and COPIES it, unextracted, to destDir under the last
+// segment of the URL's path (the query and fragment are ignored). It returns the
+// SHA-256 of the bytes that arrived, as Fetch does, and is held to the same Pin
+// and Mirror controls.
+//
+// ⛔ IT IS A SEPARATE FUNCTION, NOT A WIDER Fetch, ON PURPOSE. Fetch refuses a
+// URL with no archive extension, and that refusal is what makes a misspelt
+// `.tar.gzz` or a `?download=1` suffix fail loudly instead of staging one
+// tarball where a tree was meant. A caller that wants a plain file has to ASK
+// for one, by calling this.
+//
+// An existing file of that name is an error, never overwritten: a source that
+// silently replaced a file of the main archive would change the build without
+// saying so. The file is created 0644; a recipe that needs it executable says
+// so in its script. A digest is the CALLER's to check — the file is already
+// written when the digest is known — and a caller that finds a mismatch fails
+// the build.
+func FetchFile(url, destDir string) (string, error) {
+	name, err := fileName(url)
+	if err != nil {
+		return "", err
+	}
+	path, digest, err := fetchToTemp(url)
+	if err != nil {
+		return "", err
+	}
+	defer osRemove(path)
+	if err := osMkdirAll(destDir, 0o755); err != nil {
+		return digest, fmt.Errorf("fetch: create %s: %w", destDir, err)
+	}
+	src, err := osOpen(path)
+	if err != nil {
+		return digest, fmt.Errorf("fetch: open %s: %w", path, err)
+	}
+	defer src.Close()
+	target := filepath.Join(destDir, name)
+	// Lstat, not Stat: a symlink the main archive planted at that name is a
+	// file that exists, and writing through it would land somewhere else.
+	if _, err := os.Lstat(target); err == nil {
+		return digest, fmt.Errorf("fetch: %s already exists; a source file never overwrites what is there", target)
+	}
+	return digest, writeFile(target, 0o644, src)
+}
+
+// fileName is the name a plain file is stored under: the last segment of the
+// URL's path. A URL with no path segment ("https://host", "https://host/dir/")
+// names no file, and is refused rather than given an invented name.
+func fileName(rawURL string) (string, error) {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("fetch: bad URL %q: %w", rawURL, err)
+	}
+	name := path.Base(u.Path)
+	// path.Base("") is ".", so an empty path is refused by the "." test.
+	if strings.HasSuffix(u.Path, "/") || name == "." || name == ".." || strings.ContainsAny(name, "\\\x00") {
+		return "", fmt.Errorf("fetch: %q names no file: its path has no final segment", rawURL)
+	}
+	return name, nil
 }
 
 // Mirror, when set, is handed every archive Fetch downloads: its path on disk,
