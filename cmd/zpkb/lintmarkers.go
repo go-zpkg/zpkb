@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"sort"
@@ -14,15 +13,10 @@ import (
 // or partial set: a list that could not be read would otherwise read as "no
 // fragments are tolerated" or, worse, as a pass.
 func readMarkers(dir string) ([]string, error) {
-	st, err := os.Stat(dir)
-	if err != nil {
-		return nil, err
-	}
-	if st == nil || !st.IsDir() {
-		return nil, fmt.Errorf("%s is not a directory", dir)
-	}
+	// fs.WalkDir stats the root first, so a missing path and a plain file both
+	// come back as the walk's own error ("no such file", "not a directory").
 	var names []string
-	err = fs.WalkDir(os.DirFS(dir), ".", func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(os.DirFS(dir), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
