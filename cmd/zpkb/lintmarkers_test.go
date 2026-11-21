@@ -89,6 +89,55 @@ func TestLintFragmentsDirMissingDirIsRefused(t *testing.T) {
 	}
 }
 
+// The refusals say WHICH failure it was, so a guard removed cannot be taken
+// for another one.
+func TestReadMarkersNamesTheFailure(t *testing.T) {
+	if _, err := readMarkers(filepath.Join(t.TempDir(), "nope")); err == nil ||
+		!strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("a missing directory must say so: %v", err)
+	}
+	f := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(f, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readMarkers(f); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("a file must say so: %v", err)
+	}
+}
+
+// A subdirectory that cannot be read is an error, not a smaller set: the
+// missing markers would turn into regressions that are not there, or a stale
+// list that passes.
+func TestReadMarkersRefusesAnUnreadableSubdirectory(t *testing.T) {
+	dir := markerDir(t, "a.org", "crates.io/x")
+	sub := filepath.Join(dir, "crates.io")
+	if err := os.Chmod(sub, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	if f, err := os.Open(sub); err == nil {
+		f.Close()
+		t.Skip("this user can read a mode-0 directory")
+	}
+	names, err := readMarkers(dir)
+	if err == nil {
+		t.Fatalf("an unreadable subdirectory must fail, got %v", names)
+	}
+	if names != nil {
+		t.Errorf("no partial set may come back with an error: %v", names)
+	}
+}
+
+func TestReadMarkersReturnsNestedNamesSorted(t *testing.T) {
+	names, err := readMarkers(markerDir(t, "z.org", "crates.io/x", "a.org"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names, ","); got != "a.org,crates.io/x,z.org" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestLintFragmentsDirIsExclusiveWithMaxFragments(t *testing.T) {
 	rc, _, errb := lint(t, "--dir", nestedFragmentTree(t), "--require-standalone",
 		"--max-fragments", "2", "--fragments-dir", markerDir(t, "a.org", "crates.io/x"))
