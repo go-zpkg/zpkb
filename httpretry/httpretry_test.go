@@ -61,3 +61,19 @@ func TestBackoff(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveBackoffGrowsAndIsCapped(t *testing.T) {
+	want := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 20 * time.Second, 20 * time.Second}
+	var total time.Duration
+	for n, w := range want {
+		if got := ResolveBackoff(n); got != w {
+			t.Errorf("ResolveBackoff(%d)=%v, want %v", n, got, w)
+		}
+		if n < ResolveAttempts-1 {
+			total += ResolveBackoff(n)
+		}
+	}
+	if total != 30*time.Second || total > ResolveBudget {
+		t.Errorf("the waits of ResolveAttempts total %v, want 30s within %v", total, ResolveBudget)
+	}
+}
