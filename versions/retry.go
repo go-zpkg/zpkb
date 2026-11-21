@@ -64,7 +64,7 @@ func httpDoRetrying(req *http.Request) (*http.Response, error) {
 			return resp, err
 		}
 		wait := httpretry.ResolveBackoff(attempt)
-		if attempt == httpretry.ResolveAttempts-1 || slept+wait > httpretry.ResolveBudget {
+		if attempt == httpretry.ResolveAttempts-1 || slept+wait > resolveBudget {
 			if err != nil {
 				return resp, &TransientError{Host: req.URL.Host, Attempts: attempt + 1, Err: err}
 			}
@@ -78,3 +78,6 @@ func httpDoRetrying(req *http.Request) (*http.Response, error) {
 		sleepFn(wait)
 	}
 }
+
+// resolveBudget is httpretry.ResolveBudget as a variable, so a test can shrink it.
+var resolveBudget = httpretry.ResolveBudget

@@ -108,3 +108,36 @@ func TestResolveBackoffGrowsAndIsCapped(t *testing.T) {
 		}
 	}
 }
+
+// The time budget, not the attempt count, ends the retries when it is smaller:
+// with 5s, waits of 2s then 4s would pass it, so there are 2 requests.
+func TestResolveBudgetEndsTheRetriesBeforeTheAttempts(t *testing.T) {
+	defer restoreDo(httpDo)
+	oldB, oldS := resolveBudget, sleepFn
+	resolveBudget, sleepFn = 5*time.Second, func(time.Duration) {}
+	defer func() { resolveBudget, sleepFn = oldB, oldS }()
+	calls := 0
+	httpDo = func(*http.Request) (*http.Response, error) {
+		calls++
+		return nil, &net.OpError{Op: "dial", Err: timeoutErr{}}
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://slow.example/", nil)
+	_, err := httpDoRetrying(req)
+	if calls != 2 || !IsTransient(err) {
+		t.Errorf("calls=%d err=%v, want 2 requests and a TransientError", calls, err)
+	}
+}
+
+// A spent 5xx comes back as the RESPONSE with no error: the caller names the
+// status; only a transport failure becomes a TransientError here.
+func TestHTTPDoRetryingReturnsASpent5xxAsAResponse(t *testing.T) {
+	defer restoreDo(httpDo)
+	httpDo = func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: http.NoBody}, nil
+	}
+	req, _ := http.NewRequest(http.MethodGet, "https://down.example/", nil)
+	resp, err := httpDoRetrying(req)
+	if err != nil || resp == nil || resp.StatusCode != 503 {
+		t.Fatalf("resp=%v err=%v", resp, err)
+	}
+}
