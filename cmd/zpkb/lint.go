@@ -191,6 +191,17 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	maxFragments := fset.Int("max-fragments", -1,
 		"with --require-standalone: the number of fragments this tree still has. "+
 			"More fails as a regression, FEWER fails as a ceiling to lower")
+	// ⛔ --max-fragments IS ONE LINE EVERY RECIPE PR MUST EDIT, because it has to
+	// equal the count exactly: ~18 concurrent agents conflicted on it every
+	// minute (go-zpkg/recipes#243). --fragments-dir states the same obligation
+	// as a SET: one empty marker file per fragment, at <dir>/<recipe path>. A PR
+	// that completes a recipe deletes its own marker; distinct files never
+	// conflict. Both directions are refused, naming each item.
+	fragmentsDir := fset.String("fragments-dir", "",
+		"with --require-standalone: a directory of marker files, one per fragment at "+
+			"<dir>/<recipe path>. The fragments must EQUAL the markers: a fragment "+
+			"without one is a regression, a marker for a recipe that stands alone is "+
+			"stale. Exclusive with --max-fragments")
 	// ⛔⛔ --require-provenance NEEDED THE SAME THIRD OPTION, AND ITS OWN LANE
 	// SAID SO. go-zpkg/recipes' ci.yml carried, in a comment beside the
 	// step it did NOT add: "--require-provenance is NOT here yet. 14 of 216
@@ -275,6 +286,24 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"--require-standalone counts, and does nothing without it")
 		return 2
 	}
+	if *fragmentsDir != "" && !*requireStandalone {
+		fmt.Fprintln(stderr, "lint: --fragments-dir lists what "+
+			"--require-standalone counts, and does nothing without it")
+		return 2
+	}
+	if *fragmentsDir != "" && *maxFragments >= 0 {
+		fmt.Fprintln(stderr, "lint: --fragments-dir and --max-fragments both state "+
+			"the fragments; give one")
+		return 2
+	}
+	var markers []string
+	if *fragmentsDir != "" {
+		var err error
+		if markers, err = readMarkers(*fragmentsDir); err != nil {
+			fmt.Fprintf(stderr, "lint: --fragments-dir: %v\n", err)
+			return 2
+		}
+	}
 	if *maxNoProv >= 0 && !*requireProv {
 		fmt.Fprintln(stderr, "lint: --max-no-provenance is a ceiling on what "+
 			"--require-provenance counts, and does nothing without it")
@@ -325,6 +354,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	var fragmentNames []string
 	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead, fetching, unpinnedNewest []string
 	checkFetches := *requirePinnedFetches || *maxScriptFetches >= 0
 	buildFetchLines, testFetchRecipes, testFetchLines := 0, 0, 0
@@ -350,6 +380,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 		if miss := missingEssentials(doc); *requireStandalone && len(miss) > 0 {
 			fragments = append(fragments, fmt.Sprintf("  %s: states no %s",
 				proj, strings.Join(miss, ", no ")))
+			fragmentNames = append(fragmentNames, proj)
 		}
 		if overrideSet != nil && overrideSet.For(proj) != nil && len(missingEssentials(doc)) == 0 {
 			dead = append(dead, fmt.Sprintf("  %s: %s — %s", proj, overrideSet.Files[proj],
@@ -543,6 +574,22 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// Under the ceiling: the tree improved and the ceiling did not. Reported on
 	// stdout as a success, because nothing is wrong with the recipes — the
 	// number in the lane is what needs the edit, and the message says which.
+	markersMatch := false
+	if *fragmentsDir != "" {
+		regress, stale := diffMarkers(fragmentNames, markers)
+		if len(regress)+len(stale) > 0 {
+			for _, n := range regress {
+				fmt.Fprintf(stderr, "lint: %s is a fragment with no marker at %s: "+
+					"a regression, complete the recipe\n", n, filepath.Join(*fragmentsDir, filepath.FromSlash(n)))
+			}
+			for _, n := range stale {
+				fmt.Fprintf(stderr, "lint: marker %s names a recipe that is whole or absent: "+
+					"delete this marker\n", filepath.Join(*fragmentsDir, filepath.FromSlash(n)))
+			}
+			return 1
+		}
+		markersMatch = true
+	}
 	if *maxFragments > len(fragments) {
 		fmt.Fprintf(stderr, "lint: %d fragment(s), and --max-fragments says %d: "+
 			"lower it to %d. A ceiling nobody lowers stops describing the tree, "+
@@ -579,7 +626,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	// At or under a STATED ceiling the fragments are tolerated — that is what
 	// stating a number means. Without --max-fragments the tolerance is zero,
 	// which is the stricter reading and stays the default.
-	if len(fragments) > 0 && *maxFragments != len(fragments) {
+	if len(fragments) > 0 && *maxFragments != len(fragments) && !markersMatch {
 		return 1
 	}
 	// No tolerance and no ceiling, for the reason given where the flag is
