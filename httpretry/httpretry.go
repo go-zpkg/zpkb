@@ -68,3 +68,29 @@ func Backoff(n int) time.Duration {
 	}
 	return d
 }
+
+// ResolveAttempts, ResolveBackoff and ResolveBudget are the patience of VERSION
+// RESOLUTION, a longer one than Attempts/Backoff above. A lint lane resolves
+// every recipe's versions over the network, and a single host that is down for
+// tens of seconds (musl.libc.org TLS handshake timeout, download.samba.org 503,
+// a gitlab 500: go-zpkg/zpkb#524, seen on five pull requests in one day) turned
+// a pull request that never touched it red. 1.5 s of patience cannot outlast
+// that; 30 s can, and still ends.
+const ResolveAttempts = 5
+
+// ResolveBudget bounds the time ONE request may spend sleeping between attempts,
+// whatever the other constants say.
+const ResolveBudget = 45 * time.Second
+
+// ResolveBackoff is how long to wait before retry n, counting from 0: 2s, 4s,
+// 8s, 16s, never more than 20s. The four waits of ResolveAttempts total 30s.
+func ResolveBackoff(n int) time.Duration {
+	d := 2 * time.Second
+	for i := 0; i < n && d < 20*time.Second; i++ {
+		d *= 2
+	}
+	if d > 20*time.Second {
+		d = 20 * time.Second
+	}
+	return d
+}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-zpkg/zpkb/httpretry"
 )
 
 // TestMain silences the retry backoff for the package.
@@ -105,8 +107,8 @@ func TestHTTPDoRetryingGivesUp(t *testing.T) {
 	if _, err := httpDoRetrying(req); !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
 	}
-	if calls != 3 {
-		t.Errorf("attempts=%d, want 3", calls)
+	if calls != httpretry.ResolveAttempts {
+		t.Errorf("attempts=%d, want %d", calls, httpretry.ResolveAttempts)
 	}
 }
 

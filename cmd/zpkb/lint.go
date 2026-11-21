@@ -14,8 +14,10 @@ import (
 	"github.com/go-zpkg/artifact"
 	"github.com/go-zpkg/zpkb/build"
 	"github.com/go-zpkg/zpkb/buildscript"
+	"github.com/go-zpkg/zpkb/httpretry"
 	"github.com/go-zpkg/zpkb/logical"
 	"github.com/go-zpkg/zpkb/recipefile"
+	"github.com/go-zpkg/zpkb/versions"
 )
 
 // runLint implements `bk lint`: read every recipe in a pantry checkout and
@@ -245,6 +247,9 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	checkNewestPinned := fset.Bool("check-newest-pinned", false,
 		"resolve each pinning recipe's versions as the builder does (network) and fail one "+
 			"whose NEWEST version has no sha256 pin")
+	strictResolve := fset.Bool("strict-resolve", false,
+		"with --check-newest-pinned: fail a recipe whose host never answered (timeouts, 5xx, 429 after "+
+			"the retries) instead of warning; a source that answered with no version always fails")
 	// ⛔⛔ A BUILD SCRIPT THAT FETCHES A REMOTE ARTIFACT (go-zpkg/zpkb#487): see
 	// lintscriptfetch.go for what counts, what does not, and why. The ceiling
 	// bounds RECIPES whose BUILD fetches; test-block fetches are reported apart.
@@ -355,7 +360,7 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var fragmentNames []string
-	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead, fetching, unpinnedNewest []string
+	var bad, unrecorded, fragments, signedSha, unrendered, unknownEnv, dead, fetching, unpinnedNewest, unresolvable, unreachable []string
 	checkFetches := *requirePinnedFetches || *maxScriptFetches >= 0
 	buildFetchLines, testFetchRecipes, testFetchLines := 0, 0, 0
 	for _, proj := range projects {
@@ -387,8 +392,17 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 				deadOverrideVerdict(overrideSet.For(proj), doc)))
 		}
 		if *checkNewestPinned {
-			for _, g := range newestPinGaps(r.Versions, r.Distributable, r.Sources) {
+			gaps, rerr := newestPinGaps(r.Versions, r.Distributable, r.Sources)
+			for _, g := range gaps {
 				unpinnedNewest = append(unpinnedNewest, fmt.Sprintf("  %s: %s", proj, g))
+			}
+			if rerr != nil {
+				line := fmt.Sprintf("  %s: cannot resolve its newest version: %v", proj, rerr)
+				if versions.IsTransient(rerr) {
+					unreachable = append(unreachable, line)
+				} else {
+					unresolvable = append(unresolvable, line)
+				}
 			}
 		}
 		if checkFetches {
@@ -489,6 +503,24 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 			"that pins is fail-closed. Pin the newest, or stop `versions:` resolving it:\n",
 			len(unpinnedNewest))
 		fmt.Fprintln(stderr, strings.Join(unpinnedNewest, "\n"))
+	}
+	// Reported APART from the section above: a recipe whose newest version could
+	// not be determined is not evidence that it is unpinned (go-zpkg/zpkb#524).
+	if len(unresolvable) > 0 {
+		sort.Strings(unresolvable)
+		fmt.Fprintf(stderr, "%d recipe(s) could not be resolved: the source ANSWERED and no version "+
+			"came out of it, so the recipe is the defect (this fails the lint):\n", len(unresolvable))
+		fmt.Fprintln(stderr, strings.Join(unresolvable, "\n"))
+	}
+	if len(unreachable) > 0 {
+		sort.Strings(unreachable)
+		verdict := "WARNING, not a pin gap; their pins were NOT checked, rerun or pass --strict-resolve to fail"
+		if *strictResolve {
+			verdict = "this fails the lint (--strict-resolve)"
+		}
+		fmt.Fprintf(stderr, "%d recipe(s) could not be resolved: the host never answered within %d attempts "+
+			"(timeout, TLS handshake, 5xx or 429), %s:\n", len(unreachable), httpretry.ResolveAttempts, verdict)
+		fmt.Fprintln(stderr, strings.Join(unreachable, "\n"))
 	}
 	if overrideSet != nil {
 		fmt.Fprintf(stdout, "%d override(s) read from %s\n", len(overrideSet.Projects()), *overridesDir)
@@ -650,7 +682,10 @@ func runLint(args []string, stdout, stderr io.Writer) int {
 	if len(unknownEnv) > 0 {
 		return 1
 	}
-	if len(unpinnedNewest) > 0 {
+	if len(unpinnedNewest) > 0 || len(unresolvable) > 0 {
+		return 1
+	}
+	if *strictResolve && len(unreachable) > 0 {
 		return 1
 	}
 	return 0
