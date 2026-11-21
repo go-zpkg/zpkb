@@ -903,6 +903,14 @@ func (f *factory) buildOne(rec *pantry.Recipe, proj, ver string) {
 		f.fail(proj, res.Version, "publish", err)
 		return
 	}
+	// ⛔ A PUBLISH SAYS WHERE. "✅ OK" alone cannot be told from a build that
+	// stopped at --artifacts: a green smoke run (go-zpkg/packages#440) had no
+	// line naming the registry or the manifest, so whether anything was pushed
+	// had to be inferred from the absence of an error. The line below carries
+	// the destination, the manifest digest the registry now holds, and whether
+	// a signature went with it. It is a separate line because runlog.go's reOK
+	// parses "✅ OK <project> <tag> [platform]" exactly.
+	fmt.Fprintln(f.stdout, pushedLine(proj, tag, f.dist, desc, f.key != nil))
 	// `tag` and not a recomputation: it is what factoryPublish actually
 	// pushed under, so a line saying OK cannot name a tag nobody wrote.
 	fmt.Fprintf(f.stdout, "✅ OK %s %s %s\n", proj, tag, f.platform)
