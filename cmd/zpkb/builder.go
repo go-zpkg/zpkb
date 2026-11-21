@@ -373,7 +373,12 @@ type stageOptions struct {
 // on disk before the loader can be found in it, and the loader has to be posed
 // before a stub is worth writing.
 func stageBuilder(o stageOptions) error {
-	zpkgDir := filepath.Join(o.Root, "pkgx")
+	// ⛔ STAGED WHERE THE GUEST WILL LOOK. This said "pkgx" after guestZpkgDir
+	// became "/zpkg", so the closure sat in <root>/pkgx while the loader and
+	// /bin/sh symlinks and ZPKG_DIR pointed at /zpkg: both dangled, and
+	// `make` died with "/bin/sh: No such file or directory" (packages run
+	// 44941569330, lz4.org).
+	zpkgDir := filepath.Join(o.Root, guestZpkgDir)
 	o.Log(fmt.Sprintf("builder: resolving the toolchain closure for %s/%s", o.OS, o.Arch))
 	closure, err := resolveClosureFor(o.Roots, o.OS, o.Arch)
 	if err != nil {

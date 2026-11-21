@@ -149,7 +149,7 @@ func TestStageBuilderStubsIntoUsr(t *testing.T) {
 	if calls.stage.GuestDir != guestZpkgDir {
 		t.Errorf("stubs bake %q, want %q", calls.stage.GuestDir, guestZpkgDir)
 	}
-	if want := filepath.Join(root, "pkgx"); calls.stage.Dir != want {
+	if want := filepath.Join(root, guestZpkgDir); calls.stage.Dir != want {
 		t.Errorf("stubs read from %q, want %q", calls.stage.Dir, want)
 	}
 }
@@ -1056,8 +1056,8 @@ func TestBuilderSaysWhenItReusesAStagedTree(t *testing.T) {
 	// Pose the closure's prefixes, as a half-finished run leaves them.
 	// fakeStage resolves glibc 2.44.0 and bash 5.3.
 	for _, p := range []string{
-		filepath.Join("pkgx", artifact.GlibcProject, "v2.44.0"),
-		filepath.Join("pkgx", "gnu.org/bash", "v5.3"),
+		filepath.Join(guestZpkgDir, artifact.GlibcProject, "v2.44.0"),
+		filepath.Join(guestZpkgDir, "gnu.org/bash", "v5.3"),
 	} {
 		if err := os.MkdirAll(filepath.Join(root, p), 0o755); err != nil {
 			t.Fatal(err)
