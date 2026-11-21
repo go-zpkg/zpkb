@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/go-zpkg/zpkb/build"
+	"github.com/go-zpkg/zpkb/versions"
 )
 
 var dig = strings.Repeat("a", 64)
@@ -105,5 +107,71 @@ func TestCheckNewestPinnedRefusesWhatItCannotResolve(t *testing.T) {
 func TestBuildPinnedDigestIsExported(t *testing.T) {
 	if got, err := build.PinnedDigest(dig, "x"); err != nil || got != dig {
 		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+func resolveFails(err error) func() {
+	old := lintResolve
+	lintResolve = func(any, string) (string, string, error) { return "", "", err }
+	return func() { lintResolve = old }
+}
+
+// ⛔ go-zpkg/zpkb#524: a host that never answered is reported apart from a stale
+// pin and does not turn the lane red by default; its pin was NOT checked, and the
+// output says so.
+func TestCheckNewestPinnedWarnsOnAHostThatNeverAnswered(t *testing.T) {
+	defer resolveFails(&versions.TransientError{Host: "musl.libc.org", Attempts: 5,
+		Err: errors.New("TLS handshake timeout")})()
+	dir := lintTree(t, map[string]string{"acme.org/package.yml": pinRecipe(
+		"  - 1.0.0\n", "  url: http://x/y.tgz\n  sha256: "+dig+"\n", "")})
+	rc, _, errb := lint(t, "--dir", dir, "--check-newest-pinned")
+	if rc != 0 {
+		t.Fatalf("rc=%d, want 0 (warning):\n%s", rc, errb)
+	}
+	for _, want := range []string{"1 recipe(s) could not be resolved: the host never answered within 5 attempts",
+		"WARNING", "NOT checked", "acme.org: cannot resolve its newest version", "musl.libc.org"} {
+		if !strings.Contains(errb, want) {
+			t.Errorf("missing %q:\n%s", want, errb)
+		}
+	}
+	if strings.Contains(errb, "pin(s) of recipes whose NEWEST") {
+		t.Errorf("an unreachable host is not an unpinned newest:\n%s", errb)
+	}
+	rc, _, errb = lint(t, "--dir", dir, "--check-newest-pinned", "--strict-resolve")
+	if rc != 1 || !strings.Contains(errb, "--strict-resolve") {
+		t.Fatalf("--strict-resolve: rc=%d\n%s", rc, errb)
+	}
+}
+
+// A source that ANSWERED with no version is the recipe's defect and still fails.
+func TestCheckNewestPinnedFailsAnAnsweredSourceWithNoVersion(t *testing.T) {
+	defer resolveFails(errors.New("versions: GET http://x/: 404 Not Found"))()
+	dir := lintTree(t, map[string]string{"acme.org/package.yml": pinRecipe(
+		"  - 1.0.0\n", "  url: http://x/y.tgz\n  sha256: "+dig+"\n", "")})
+	rc, _, errb := lint(t, "--dir", dir, "--check-newest-pinned")
+	if rc != 1 || !strings.Contains(errb, "the source ANSWERED") || strings.Contains(errb, "never answered") {
+		t.Fatalf("rc=%d\n%s", rc, errb)
+	}
+}
+
+// An unreachable host elsewhere must not hide a real stale pin.
+func TestCheckNewestPinnedStalePinStillFailsBesideAnUnreachableHost(t *testing.T) {
+	old := lintResolve
+	lintResolve = func(spec any, c string) (string, string, error) {
+		if !strings.Contains(fmt.Sprint(spec), "16.2.0") {
+			return "", "", &versions.TransientError{Host: "h", Attempts: 5, Err: errors.New("503")}
+		}
+		return old(spec, c)
+	}
+	defer func() { lintResolve = old }()
+	dir := lintTree(t, map[string]string{
+		"down.org/package.yml": pinRecipe("  - 1.0.0\n", "  url: http://x/y.tgz\n  sha256: "+dig+"\n", ""),
+		"acme.org/package.yml": pinRecipe("  - 14.4.0\n  - 16.2.0\n",
+			"  url: http://x/{{version.raw}}.tgz\n  sha256:\n    14.4.0: "+dig+"\n", ""),
+	})
+	rc, _, errb := lint(t, "--dir", dir, "--check-newest-pinned")
+	if rc != 1 || !strings.Contains(errb, "acme.org: distributable: newest resolved version is 16.2.0") ||
+		!strings.Contains(errb, "down.org: cannot resolve") {
+		t.Fatalf("rc=%d\n%s", rc, errb)
 	}
 }

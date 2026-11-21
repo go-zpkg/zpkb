@@ -34,7 +34,16 @@ var lintResolve = versions.Resolve
 // A recipe that pins nothing is skipped BEFORE resolving: it would be a
 // network round trip to answer a question it cannot fail, and it must not be
 // refused for being unable to reach its upstream.
-func newestPinGaps(spec, dist, sources any) []string {
+//
+// TWO KINDS OF "NO" (go-zpkg/zpkb#524). A newest version that is resolved and
+// not pinned is the defect this check exists for: the first result. A newest
+// version that could not be RESOLVED is not evidence about the pin: the second
+// result, an error, which the caller reports in its own section. The caller
+// tells a host that never answered (versions.IsTransient: timeouts, 5xx, 429
+// after the whole retry budget) from a source that answered "no" (404, no
+// candidate, a regexp that matches nothing), because only the second is a
+// recipe defect.
+func newestPinGaps(spec, dist, sources any) ([]string, error) {
 	type pinned struct {
 		label string
 		sha   any
@@ -58,13 +67,13 @@ func newestPinGaps(spec, dist, sources any) []string {
 		}
 	}
 	if len(pins) == 0 {
-		return nil
+		return nil, nil
 	}
 	newest, _, err := lintResolve(spec, "*")
 	if err != nil {
 		// Not a pass: an unresolved recipe is one this check could not judge,
 		// and a sweep that cannot read reports the same zero as a clean one.
-		return []string{fmt.Sprintf("cannot resolve its newest version: %v", err)}
+		return nil, err
 	}
 	var out []string
 	for _, p := range pins {
@@ -72,5 +81,5 @@ func newestPinGaps(spec, dist, sources any) []string {
 			out = append(out, fmt.Sprintf("%s: newest resolved version is %s: %v", p.label, newest, err))
 		}
 	}
-	return out
+	return out, nil
 }

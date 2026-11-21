@@ -48,7 +48,8 @@ var (
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("versions: GET %s: %s", url, resp.Status)
+			return "", transientStatus(url, resp.StatusCode,
+				fmt.Errorf("versions: GET %s: %s", url, resp.Status))
 		}
 		body, err := ioReadAll(resp.Body)
 		if err != nil {
@@ -107,7 +108,8 @@ var (
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("versions: releases %s: %s", apiURL, resp.Status)
+			return nil, transientStatus(apiURL, resp.StatusCode,
+				fmt.Errorf("versions: releases %s: %s", apiURL, resp.Status))
 		}
 		body, err := ioReadAll(resp.Body)
 		if err != nil {
