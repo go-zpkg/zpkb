@@ -258,6 +258,16 @@ func TestRunFactoryBuildsClosureDepsFirst(t *testing.T) {
 	if h.failuresFile(t) != "" || h.detailFile(t) != "" {
 		t.Fatalf("failure files not empty: %q / %q", h.failuresFile(t), h.detailFile(t))
 	}
+	// A publish names its destination and manifest (go-zpkg/packages#440).
+	libTag := specTag("lib.org", "9.9")
+	wantPush := pushedLine("lib.org", libTag, "oci://example.test/pkgs",
+		ocispec.Descriptor{Digest: digest.FromString("lib.org" + libTag + "x86-64")}, false)
+	if !strings.Contains(out, wantPush) {
+		t.Fatalf("stdout missing the push line %q:\n%s", wantPush, out)
+	}
+	if !strings.Contains(wantPush, "oci://example.test/pkgs") || !strings.Contains(wantPush, "sha256:") || !strings.Contains(wantPush, "unsigned") {
+		t.Fatalf("push line does not name destination, digest and signing: %q", wantPush)
+	}
 }
 
 // TestFactorySeamsAreReal exercises the seams the other tests stub out, so the

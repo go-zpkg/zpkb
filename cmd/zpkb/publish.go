@@ -613,6 +613,16 @@ func publishArtifact(o publishOptions) (string, ocispec.Descriptor, error) {
 	return tag, desc, nil
 }
 
+// pushedLine is the log line for a completed push: where, under what tag, which
+// manifest, signed or not.
+func pushedLine(proj, tag, dist string, desc ocispec.Descriptor, signed bool) string {
+	sig := "unsigned"
+	if signed {
+		sig = "signed"
+	}
+	return fmt.Sprintf("📤 PUSHED %s:%s → %s (manifest %s, %s)", proj, tag, dist, desc.Digest, sig)
+}
+
 // refuseToMoveATag stops a push that would leave an existing HASHED tag
 // resolving to bytes it did not resolve to before.
 //
