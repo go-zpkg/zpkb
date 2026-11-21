@@ -17,13 +17,11 @@ func readMarkers(dir string) ([]string, error) {
 	// come back as the walk's own error ("no such file", "not a directory").
 	var names []string
 	err := fs.WalkDir(os.DirFS(dir), ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() {
+		// d is nil when the root itself could not be read, hence err first.
+		if err == nil && !d.IsDir() {
 			names = append(names, p)
 		}
-		return nil
+		return err
 	})
 	if err != nil {
 		return nil, err
