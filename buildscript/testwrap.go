@@ -39,6 +39,17 @@ type TestWrapOptions struct {
 	// still published would otherwise test 5.3.0 and report on the wrong
 	// bytes — a green result about a build that never happened.
 	Package string
+	// PackagePrefix is the INSTALLED prefix of the exact build under test, hash
+	// included. The pkgspec above cannot name a build, only a version, and
+	// zpkx then asks the store which one that is: with two builds of one
+	// version on disk (a seed dependency and the build just made — the normal
+	// state of a sovereign run) the answer is "ambiguous", the prefix falls
+	// back to a `v<version>` directory that does not exist, and the closure's
+	// bin/ is silently left off PATH (go-zpkg/packages#440: `"lz4": executable
+	// file not found in $PATH` after a green publish). So the build's own bin,
+	// sbin and lib directories go on PATH and LD_LIBRARY_PATH AFTER the eval,
+	// ahead of whatever it chose. Empty means the eval alone decides.
+	PackagePrefix string
 	// Deps are the recipe's test.dependencies, already reduced for the target
 	// and rendered as pkgspecs. They are a SEPARATE map from build and runtime
 	// dependencies: a test may need a fixture generator or a diff tool that
@@ -167,6 +178,11 @@ func WrapTest(o TestWrapOptions) string {
 	if o.ZpkxBin != "" {
 		fmt.Fprintf(&b, "export ZPKX=%q\n", o.ZpkxBin)
 		fmt.Fprintf(&b, "export ZPKGX=%q\n", o.ZpkxBin) // retired spelling
+	}
+
+	if p := o.PackagePrefix; p != "" {
+		fmt.Fprintf(&b, "export PATH=%q\"${PATH:+:$PATH}\"\n", p+"/bin:"+p+"/sbin")
+		fmt.Fprintf(&b, "export LD_LIBRARY_PATH=%q\"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\"\n", p+"/lib:"+p+"/lib64")
 	}
 
 	// After the eval, so the artifacts are on disk and $ZPKG_DIR is set; before
