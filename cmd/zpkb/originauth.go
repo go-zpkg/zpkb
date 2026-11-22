@@ -221,6 +221,20 @@ var sourceVerified = func(dist, project, tag, osn, arch string) (string, [][]byt
 	if err != nil {
 		return "", nil, nil, err
 	}
+	return readVerified(c, project, tag, osn, arch)
+}
+
+// originReader is what readVerified asks of a registry client.
+type originReader interface {
+	ArtifactDigest(project, ver, osn, arch string) (string, error)
+	VerifiedPayloads(project, ver, osn, arch, digest string) ([][]byte, error)
+	FetchAttestations(project, ver, osn, arch string) ([]artifact.Referrer, map[string]string, error)
+}
+
+// readVerified is the three reads, in the order that matters: the digest, then
+// the payloads verified for exactly that digest, then the referrers. Any failure
+// is an error, never a partial answer.
+func readVerified(c originReader, project, tag, osn, arch string) (string, [][]byte, []artifact.Referrer, error) {
 	digest, err := c.ArtifactDigest(project, tag, osn, arch)
 	if err != nil {
 		return "", nil, nil, err
@@ -307,14 +321,14 @@ func hostToolchainUnder(root string) string {
 
 // isStub reports whether the file is one of the shell stubs.
 func isStub(p string) bool {
-	f, err := os.Open(p)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
 	buf := make([]byte, len(stubPrefix))
-	n, _ := f.Read(buf)
-	return bytes.Equal(buf[:n], []byte(stubPrefix))
+	n := 0
+	f, err := os.Open(p)
+	if err == nil {
+		n, _ = f.Read(buf)
+		f.Close()
+	}
+	return err == nil && bytes.Equal(buf[:n], []byte(stubPrefix))
 }
 
 // sovereignClaim returns the value the build records: "1" only when the
