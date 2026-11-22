@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -389,8 +391,96 @@ func TestStageOnlyReportsWhatItCouldNotStage(t *testing.T) {
 	if len(p.Artifacts) != 0 {
 		t.Fatalf("an artifact that could not be hashed is in the plan: %+v", p.Artifacts)
 	}
-	if !strings.Contains(r.h.out.String()+r.h.errb.String(), "stage") {
-		t.Errorf("the failure does not say it was the staging:\n%s\n%s", r.h.out.String(), r.h.errb.String())
+	all := r.h.out.String() + r.h.errb.String()
+	if !strings.Contains(all, "STAGE FAIL") {
+		t.Errorf("the failure does not say it was the staging:\n%s", all)
+	}
+	if strings.Contains(all, "✅ BUILT") || !strings.Contains(all, "0 built, 0 skipped, 1 failed") {
+		t.Errorf("an artifact that could not be staged was counted as built (code %d):\n%s", code, all)
+	}
+}
+
+// Each refusal below is also reached by a LATER check that would say no for
+// another reason, so the assertions read the reason: a deleted guard then changes
+// the message and not just the exit code.
+func TestRefusalsNameTheirOwnReason(t *testing.T) {
+	// The spec string is unparseable, which is not the same refusal as a spec that
+	// parses and does not round-trip.
+	if _, err := (stageEntry{Spec: "not a spec"}).concrete(); err == nil || strings.Contains(err.Error(), "canonical") {
+		t.Errorf("an unparseable spec: %v", err)
+	}
+	dir := t.TempDir()
+	if _, _, err := hashFile(filepath.Join(dir, "missing")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("hashing a missing file: %v", err)
+	}
+	p := guardPlan()
+	if err := p.addBuilt("relative/dir", publishOptions{Project: "a.org", Version: "1.0", OS: "linux", Arch: "x86-64", Path: filepath.Join(dir, "a.tar.gz")}); err == nil || !strings.Contains(err.Error(), "relative") {
+		t.Errorf("a path with no relative form: %v", err)
+	}
+	if err := p.addBuilt(dir, publishOptions{Project: "a.org", Version: "1.0", OS: "linux", Arch: "x86-64", Path: filepath.Join(dir, "gone.tar.gz")}); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("recording a missing file: %v", err)
+	}
+	blocker := filepath.Join(dir, "f")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStagePlan(filepath.Join(blocker, "sub"), &p); err == nil || !strings.Contains(err.Error(), "mkdir") {
+		t.Errorf("a directory under a regular file: %v", err)
+	}
+	if os.Getuid() != 0 {
+		ro := filepath.Join(dir, "ro")
+		if err := os.Mkdir(ro, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeStagePlan(ro, &p); err == nil || !strings.Contains(err.Error(), "permission") {
+			t.Errorf("a read-only directory: %v", err)
+		}
+	}
+	bad := filepath.Join(dir, "bad")
+	if err := os.Mkdir(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, stagePlanName), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadStagePlan(bad, "oci://x/y", "linux/x86-64", time.Unix(1, 0)); err == nil || !strings.Contains(err.Error(), "not one this run can extend") {
+		t.Errorf("an unreadable existing plan: %v", err)
+	}
+	_, _, err := publishArtifact(publishOptions{Dist: stageDist, Project: "a.org", Version: "1.0", OS: "linux", Arch: "x86-64", Path: filepath.Join(dir, "gone.tar.gz")})
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("publishing a missing file: %v", err)
+	}
+}
+
+func TestPublishStageSaysWhyItRefused(t *testing.T) {
+	run := func(args ...string) (int, string) {
+		var out, errb bytes.Buffer
+		code := runPublishStage(args, &out, &errb)
+		return code, errb.String()
+	}
+	to := []string{"--to", stageDist, "--allow-unsigned"}
+	if code, e := run(append([]string{t.TempDir(), "--nope"}, to...)...); code != 2 || strings.Contains(e, "usage: zpkb publish-stage") {
+		t.Errorf("an unknown flag is the flag package's refusal, not the usage line: %d %s", code, e)
+	}
+	if code, e := run(append([]string{filepath.Join(t.TempDir(), "none")}, to...)...); code != 1 || !strings.Contains(e, "no such file") {
+		t.Errorf("a stage directory that is not there: %d %s", code, e)
+	}
+	if code, e := run(append([]string{t.TempDir()}, to...)...); code != 1 || !strings.Contains(e, "no such file") {
+		t.Errorf("a directory with no plan: %d %s", code, e)
+	}
+	asDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(asDir, stagePlanName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, e := run(append([]string{asDir}, to...)...); code != 1 || !strings.Contains(e, "is a directory") {
+		t.Errorf("a plan that is a directory: %d %s", code, e)
+	}
+	garbage := t.TempDir()
+	if err := os.WriteFile(filepath.Join(garbage, stagePlanName), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, e := run(append([]string{garbage}, to...)...); code != 1 || !strings.Contains(e, "publish-stage: ") || strings.Contains(e, "no such file") {
+		t.Errorf("a plan that is not json: %d %s", code, e)
 	}
 }
 
