@@ -433,7 +433,7 @@ func TestRootfsClosureInstallGuards(t *testing.T) {
 		putFile(t, filepath.Join(f.rootfs, "bin/app"), app)
 		putFile(t, filepath.Join(f.dep, "lib/libA.so.1"), synth{}.bytes())
 		link(t, "usr", filepath.Join(f.rootfs, "usr")) // a loop where usr/lib should be
-		mustFail(t, f, "rootfs: usr/lib: ")
+		mustFail(t, f, "usr/lib: usr/lib: more than")
 	})
 	t.Run("lib dir read-only", func(t *testing.T) {
 		needPerms(t)
