@@ -101,6 +101,8 @@ func TestStagePlanParserHoldsEveryBoundFromBothSides(t *testing.T) {
 			e.BuildEnv = []stageDep{{Path: "a\x01"}}
 		}), "build_env[0]"},
 		{"bootstrap that is not 0 or 1", with(func(e *stageEntry) { e.Bootstrap = "2" }), "bootstrap"},
+		{"sovereign that is not 0 or 1", with(func(e *stageEntry) { e.Sovereign = "yes" }), "sovereign"},
+		{"sovereign 1", with(func(e *stageEntry) { e.Sovereign = "1" }), ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			err := guardParse(t, c.plan)

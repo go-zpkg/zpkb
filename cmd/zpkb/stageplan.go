@@ -79,6 +79,9 @@ type stageEntry struct {
 	Source    stageSource `json:"source"`
 	BuildEnv  []stageDep  `json:"build_env"`
 	Bootstrap string      `json:"bootstrap"`
+	// Sovereign is what the build measured about its own machine (see
+	// sovereignClaim). Like Bootstrap it is the untrusted side's statement.
+	Sovereign string `json:"sovereign,omitempty"`
 }
 
 type stagePlan struct {
@@ -248,6 +251,11 @@ func (e stageEntry) validate(plan *stagePlan) error {
 	case "", "0", "1":
 	default:
 		return fmt.Errorf("%s: bootstrap %q is not \"\", \"0\" or \"1\"", label, e.Bootstrap)
+	}
+	switch e.Sovereign {
+	case "", "0", "1":
+	default:
+		return fmt.Errorf("%s: sovereign %q is not \"\", \"0\" or \"1\"", label, e.Sovereign)
 	}
 	return nil
 }
@@ -435,6 +443,7 @@ func (p *stagePlan) addBuilt(dir string, o publishOptions) error {
 		Source:    stageSourceOf(o.Source),
 		BuildEnv:  []stageDep{},
 		Bootstrap: o.Origin.Bootstrap,
+		Sovereign: o.Origin.Sovereign,
 	}
 	if !o.Concrete.IsZero() {
 		e.Spec = artifact.MarshalSpec(o.Concrete)
@@ -591,7 +600,7 @@ func runPublishStage(args []string, stdout, stderr io.Writer) int {
 			Glibc: e.Glibc, Key: kp, Time: when,
 			Source: e.Source.ref(), BuildEnv: env,
 			Advisories: *advisories,
-			Origin:     provOrigin{Bootstrap: e.Bootstrap, Dist: *to},
+			Origin:     provOrigin{Bootstrap: e.Bootstrap, Sovereign: e.Sovereign, Dist: *to},
 			Concrete:   c,
 		})
 		if err != nil {

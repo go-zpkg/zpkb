@@ -944,7 +944,7 @@ func (f *factory) buildOne(rec *pantry.Recipe, proj, ver string) {
 			if err := f.stage.addBuilt(f.artifacts, publishOptions{
 				Project: proj, Version: publishVersion, OS: f.osn, Arch: f.arch,
 				Path: res.ArtifactPath, Glibc: f.glibc, Source: res.Source, BuildEnv: res.BuildEnv,
-				Origin:   provOrigin{Bootstrap: boolParam(f.runner.Bootstrap), Dist: f.dist},
+				Origin:   provOrigin{Bootstrap: boolParam(f.runner.Bootstrap), Sovereign: f.sovereign, Dist: f.dist},
 				Concrete: res.Concrete,
 			}); err != nil {
 				f.fail(proj, res.Version, "stage", err)
