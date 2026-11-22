@@ -377,16 +377,19 @@ func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
 		// about. A bare project name would let pkgx pick whatever version the
 		// registry likes, and a green line would then be about a different
 		// build from the one the operator named.
-		Package:  build.DepSpecs(map[string]any{project: "=" + ver}, tgt)[0],
-		Deps:     testDepSpecs(rec.Test, tgt),
-		Compiler: needsCompiler(user),
-		Home:     paths.Home,
-		Sandbox:  box,
-		ZpkgDir:  config.ZpkgDir(),
-		ZpkxBin:  zpkxBin,
-		BashPath: "/bin/bash",
-		ShimDir:  shimDir,
-		Host:     target.Host(),
+		Package: build.DepSpecs(map[string]any{project: "=" + ver}, tgt)[0],
+		// The build's own prefix, because the spec names a version and the
+		// store may hold several builds of it. See TestWrapOptions.PackagePrefix.
+		PackagePrefix: paths.Install,
+		Deps:          testDepSpecs(rec.Test, tgt),
+		Compiler:      needsCompiler(user),
+		Home:          paths.Home,
+		Sandbox:       box,
+		ZpkgDir:       config.ZpkgDir(),
+		ZpkxBin:       zpkxBin,
+		BashPath:      "/bin/bash",
+		ShimDir:       shimDir,
+		Host:          target.Host(),
 	}), nil
 }
 

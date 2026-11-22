@@ -152,6 +152,9 @@ func testModes() []TestWrapOptions {
 		Sandbox: "/test/sandbox",
 		ZpkgDir: "/zpkg",
 		ZpkxBin: "/bin/zpkx",
+		// Set, so the exports WrapTest makes for the build under test are
+		// enumerated — a test script exports LD_LIBRARY_PATH for it.
+		PackagePrefix: "/zpkg/acme.org/v1.0.0",
 	}
 	var out []TestWrapOptions
 	for _, h := range []target.Target{host, darwin} {
