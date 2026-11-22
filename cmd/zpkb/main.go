@@ -23,6 +23,7 @@
 //	zpkbversions          list a recipe's candidate versions
 //	zpkbbuild             build a recipe into an artifact
 //	zpkbpublish           push a built artifact to an OCI registry
+//	zpkb publish-stage    sign and push what `factory --stage-only` staged, from a process that ran no recipe
 //	zpkbclosure           print a project set's transitive runtime closure (topological)
 //	zpkbcatalog           build (and publish, signed) the catalogue pkgx ls
 //	                     and <TAB> read
@@ -208,7 +209,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(stderr, "usage: zpkb [--platform p] <version|buildenv|origin|target|fixup|versions|build|test|publish|closure|lock|tools|tohcl|lint|vulnid|advisories|vulnfetch|attest|overrides|depgaps|builder|factory|source|reproduce|sign> [args]")
+		fmt.Fprintln(stderr, "usage: zpkb [--platform p] <version|buildenv|origin|target|fixup|versions|build|test|publish|publish-stage|closure|lock|tools|tohcl|lint|vulnid|advisories|vulnfetch|attest|overrides|depgaps|builder|factory|source|reproduce|sign> [args]")
 		return 2
 	}
 
@@ -269,6 +270,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runTest(rest[1:], stdout, stderr)
 	case "publish":
 		return runPublish(rest[1:], stdout, stderr)
+	case "publish-stage":
+		return runPublishStage(rest[1:], stdout, stderr)
 	case "closure":
 		return runClosure(rest[1:], stdout, stderr)
 	case "catalog":

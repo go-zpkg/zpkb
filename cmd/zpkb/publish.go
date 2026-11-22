@@ -475,9 +475,12 @@ type publishOptions struct {
 	Version  string // TRUE software version (what the SBOM/provenance record)
 	OS, Arch string // pkgx-form platform, e.g. linux + x86-64
 	Path     string // the built artifact tarball on disk
-	Glibc    string // glibc this artifact was built against ("" = system glibc)
-	Key      *sign.Keypair
-	Time     time.Time // attestation timestamp; zero = buildTime()
+	// Tarball is the artifact's bytes when the caller already holds them, so
+	// Path only names the codec. nil = read Path.
+	Tarball []byte
+	Glibc   string // glibc this artifact was built against ("" = system glibc)
+	Key     *sign.Keypair
+	Time    time.Time // attestation timestamp; zero = buildTime()
 	// Source is what the build was made from — the candidate URL that answered
 	// and the digest of what came back. Empty for `bk publish` on an artifact this
 	// process did not build, and for the few recipes with no distributable.
@@ -519,10 +522,18 @@ type publishOptions struct {
 // index check needs: it cannot discover the manifest, because that lookup would
 // go through the very index whose contents are in question.
 func publishArtifact(o publishOptions) (string, ocispec.Descriptor, error) {
-	tarball, err := osReadFile(o.Path)
-	if err != nil {
-		return "", ocispec.Descriptor{}, err
+	// Tarball, when set, is the bytes publish-stage already read and checked
+	// against its plan: reading Path again would publish whatever the file holds
+	// a moment later rather than what was verified.
+	tarball := o.Tarball
+	if tarball == nil {
+		var err error
+		tarball, err = osReadFile(o.Path)
+		if err != nil {
+			return "", ocispec.Descriptor{}, err
+		}
 	}
+	var err error
 	// The FILE decides the media type, not a flag: an artifact mirrored from an
 	// upstream dist arrives in whatever codec that dist used, and mislabelling it
 	// would make every puller decompress with the wrong decoder.

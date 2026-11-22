@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"schema\":1,\"dist\":\"oci://x/y\",\"platform\":\"linux/x86-64\",\"builder\":\"b\",\"time\":0,\"artifacts\":[{\"project\":\"a.org\",\"version\":\"1.0\",\"tag\":\"1.0\",\"os\":\"linux\",\"arch\":\"x86-64\",\"file\":\"../../etc/x.tar.gz\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"size\":1,\"glibc\":\"\",\"spec\":\"\",\"source\":{\"uri\":\"\",\"sha256\":\"\",\"commit\":\"\"},\"build_env\":[],\"bootstrap\":\"\"}]} {}")
