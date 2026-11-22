@@ -327,6 +327,18 @@ func loadStagePlan(dir, dist, platform string, when time.Time) (*stagePlan, erro
 	return old, nil
 }
 
+// The calls below are named so a test can make each one fail: none of them can
+// be made to fail through the file system alone, and a guard nothing can reach
+// is a guard nothing holds.
+var (
+	stageMarshal = json.MarshalIndent
+	stageWrite   = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+	stageClose   = func(f *os.File) error { return f.Close() }
+	stageChmod   = os.Chmod
+	stageStat    = func(f *os.File) (fs.FileInfo, error) { return f.Stat() }
+	stageReadAll = func(f *os.File, limit int64) ([]byte, error) { return io.ReadAll(io.LimitReader(f, limit)) }
+)
+
 func readCapped(path string, limit int64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -349,7 +361,7 @@ func writeStagePlan(dir string, p *stagePlan) error {
 	if p.Artifacts == nil {
 		p.Artifacts = []stageEntry{}
 	}
-	data, err := json.MarshalIndent(p, "", "  ")
+	data, err := stageMarshal(p, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -369,16 +381,16 @@ func writeStagePlan(dir string, p *stagePlan) error {
 		return err
 	}
 	name := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := stageWrite(tmp, data); err != nil {
 		tmp.Close()
 		os.Remove(name)
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	if err := stageClose(tmp); err != nil {
 		os.Remove(name)
 		return err
 	}
-	if err := os.Chmod(name, 0o644); err != nil {
+	if err := stageChmod(name, 0o644); err != nil {
 		os.Remove(name)
 		return err
 	}
@@ -451,7 +463,7 @@ func readStaged(root *os.Root, e stageEntry) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
+	st, err := stageStat(f)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +473,7 @@ func readStaged(root *os.Root, e stageEntry) ([]byte, error) {
 	if st.Size() != e.Size {
 		return nil, fmt.Errorf("%s is %d bytes, the plan says %d", e.File, st.Size(), e.Size)
 	}
-	b, err := io.ReadAll(io.LimitReader(f, e.Size+1))
+	b, err := stageReadAll(f, e.Size+1)
 	if err != nil {
 		return nil, err
 	}

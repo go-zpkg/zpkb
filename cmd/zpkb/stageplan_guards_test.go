@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -449,6 +451,75 @@ func TestRefusalsNameTheirOwnReason(t *testing.T) {
 	_, _, err := publishArtifact(publishOptions{Dist: stageDist, Project: "a.org", Version: "1.0", OS: "linux", Arch: "x86-64", Path: filepath.Join(dir, "gone.tar.gz")})
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("publishing a missing file: %v", err)
+	}
+}
+
+// A call that fails must leave neither a half plan nor a temporary file, and the
+// error must be the call's own.
+func TestWriteStagePlanFailsCleanlyAtEachCall(t *testing.T) {
+	boom := errors.New("injected")
+	cases := []struct {
+		name string
+		set  func()
+	}{
+		{"marshal", func() { stageMarshal = func(any, string, string) ([]byte, error) { return nil, boom } }},
+		{"write", func() { stageWrite = func(*os.File, []byte) (int, error) { return 0, boom } }},
+		{"close", func() {
+			stageClose = func(f *os.File) error { f.Close(); return boom }
+		}},
+		{"chmod", func() { stageChmod = func(string, os.FileMode) error { return boom } }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			oldM, oldW, oldC, oldH := stageMarshal, stageWrite, stageClose, stageChmod
+			t.Cleanup(func() { stageMarshal, stageWrite, stageClose, stageChmod = oldM, oldW, oldC, oldH })
+			c.set()
+			dir := t.TempDir()
+			p := guardPlan()
+			if err := writeStagePlan(dir, &p); !errors.Is(err, boom) {
+				t.Fatalf("err = %v, want the injected one", err)
+			}
+			left, _ := os.ReadDir(dir)
+			if len(left) != 0 {
+				t.Errorf("a failed write left %d file(s) behind", len(left))
+			}
+		})
+	}
+}
+
+func TestReadStagedFailsAtEachCall(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte("payload")
+	if err := os.WriteFile(filepath.Join(dir, "a.tar.gz"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	sum := sha256.Sum256(body)
+	e := stageEntry{File: "a.tar.gz", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
+	if b, err := readStaged(root, e); err != nil || string(b) != "payload" {
+		t.Fatalf("the good file: %q %v", b, err)
+	}
+	boom := errors.New("injected")
+	oldS, oldR := stageStat, stageReadAll
+	t.Cleanup(func() { stageStat, stageReadAll = oldS, oldR })
+	stageStat = func(*os.File) (fs.FileInfo, error) { return nil, boom }
+	if _, err := readStaged(root, e); !errors.Is(err, boom) {
+		t.Errorf("stat: %v", err)
+	}
+	stageStat = oldS
+	stageReadAll = func(*os.File, int64) ([]byte, error) { return nil, boom }
+	if _, err := readStaged(root, e); !errors.Is(err, boom) {
+		t.Errorf("read: %v", err)
+	}
+	// The file shrank between the size check and the read, to bytes that still
+	// have the planned digest only if the length were not checked first.
+	stageReadAll = func(*os.File, int64) ([]byte, error) { return body[:3], nil }
+	if _, err := readStaged(root, e); err == nil || !strings.Contains(err.Error(), "changed size") {
+		t.Errorf("a short read: %v", err)
 	}
 }
 
