@@ -31,17 +31,29 @@ import (
 // MISS: reported, not fatal. It is the point of reading the notes at all: a
 // rootfs that boots without an optional feature does so silently.
 const (
-	maxRootfsEntries = 1_000_000 // directory entries walked
-	maxRootfsELFs    = 100_000   // ELF files examined
-	maxRootfsLibs    = 4096      // libraries copied in
-	maxRootfsDepth   = 32        // transitive depth below a rootfs ELF
 	maxResolveLinks  = 40        // symlinks followed in one resolution, as the kernel's
 	maxResolveComps  = 4096      // components pending in one resolution
-	maxLibBytes      = 1 << 30   // one copied library
 	maxInterpBytes   = 4096      // a PT_INTERP string
 	maxReportedFails = 20        // failures quoted in the error
 	rootfsLibDir     = "usr/lib" // where closure libraries land
 	maxELFHeaderRead = 4         // bytes read to tell an ELF from anything else
+)
+
+// The bounds a test lowers to reach them (a million entries is not a fixture).
+var (
+	maxRootfsEntries       = 1_000_000 // directory entries walked
+	maxRootfsELFs          = 100_000   // ELF files examined
+	maxRootfsLibs          = 4096      // libraries copied in
+	maxRootfsDepth         = 32        // transitive depth below a rootfs ELF
+	maxLibBytes      int64 = 1 << 30   // one copied library
+)
+
+// Seams for the two calls whose failure no fixture can provoke: a symlink that
+// stops being one between Lstat and Readlink, a read error in the middle of a
+// copy.
+var (
+	readlink = os.Readlink
+	ioCopy   = io.Copy
 )
 
 // libSearchDirs are searched, in order, inside a dependency prefix and inside
@@ -79,31 +91,24 @@ func fhsLib(e string) bool {
 // would not fit is an error rather than a silently kept store RUNPATH.
 func (c *rootfsCloser) rootfsRunpath(self, old string) string {
 	var keep []string
-	have, dropped := false, false
+	have := false
 	for _, e := range strings.Split(old, ":") {
 		switch {
-		case e == "":
-			dropped = true
 		case strings.HasPrefix(e, "$ORIGIN") || strings.HasPrefix(e, "${ORIGIN}"):
 			r := strings.TrimPrefix(strings.TrimPrefix(e, "$ORIGIN"), "${ORIGIN}")
 			abs := filepath.Join(filepath.Dir(self), r)
 			if c.isRootfsDir(abs) {
 				keep = append(keep, e)
-			} else {
-				dropped = true
 			}
 		case fhsLib(e):
 			keep = append(keep, e)
 			if filepath.Clean(e) == "/usr/lib" {
 				have = true
 			}
-		default:
-			dropped = true
 		}
 	}
-	if !dropped {
-		return old // nothing foreign in it: leave the bytes alone
-	}
+	// Nothing dropped leaves nv == old, and appending /usr/lib to it can only
+	// lengthen it, so it does not fit: the bytes stay as they were.
 	nv := strings.Join(keep, ":")
 	if !have {
 		if with := strings.Join(append(keep, "/usr/lib"), ":"); len(with) <= len(old) {
@@ -120,16 +125,12 @@ func (c *rootfsCloser) isRootfsDir(abs string) bool {
 	if abs != c.root && !strings.HasPrefix(abs, c.root+string(filepath.Separator)) {
 		return false
 	}
-	rel, err := filepath.Rel(c.root, abs)
-	if err != nil {
-		return false
+	rel, _ := filepath.Rel(c.root, abs) // abs is under root, so Rel cannot fail
+	if p, err := resolveIn(c.root, rel, true, false); err == nil {
+		fi, err := os.Lstat(p)
+		return err == nil && fi.IsDir()
 	}
-	p, err := resolveIn(c.root, rel, true, false)
-	if err != nil {
-		return false
-	}
-	fi, err := os.Lstat(p)
-	return err == nil && fi.IsDir()
+	return false
 }
 
 func (c *rootfsCloser) rewriteRunpaths() error {
@@ -235,7 +236,10 @@ func resolveIn(root, rel string, chroot, create bool) (string, error) {
 	comps := splitComps(rel)
 	cur := root
 	links := 0
-	for len(comps) > 0 {
+	// The bound is in the loop header, not in a guard inside it: a guard whose
+	// removal leaves a symlink loop spinning forever can only be told apart by a
+	// timeout, and a timeout is not an assertion.
+	for len(comps) > 0 && links <= maxResolveLinks {
 		if len(comps) > maxResolveComps {
 			return "", fmt.Errorf("%s: path too long to resolve", rel)
 		}
@@ -271,10 +275,7 @@ func resolveIn(root, rel string, chroot, create bool) (string, error) {
 		}
 		if fi.Mode()&fs.ModeSymlink != 0 {
 			links++
-			if links > maxResolveLinks {
-				return "", fmt.Errorf("%s: more than %d symlinks (a loop?)", rel, maxResolveLinks)
-			}
-			t, err := os.Readlink(next)
+			t, err := readlink(next)
 			if err != nil {
 				return "", err
 			}
@@ -288,6 +289,9 @@ func resolveIn(root, rel string, chroot, create bool) (string, error) {
 			continue
 		}
 		cur = next
+	}
+	if len(comps) > 0 {
+		return "", fmt.Errorf("%s: more than %d symlinks (a loop?)", rel, maxResolveLinks)
 	}
 	return cur, nil
 }
@@ -535,9 +539,6 @@ func (c *rootfsCloser) install(src, soname string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
-		return "", fmt.Errorf("rootfs: %s is not a directory", rootfsLibDir)
-	}
 	real := filepath.Base(src)
 	dst := filepath.Join(dir, real)
 	if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
@@ -566,23 +567,23 @@ func (c *rootfsCloser) install(src, soname string) (string, error) {
 }
 
 func copyBounded(src, dst string) error {
+	fi, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > maxLibBytes {
+		return fmt.Errorf("rootfs: %s is not a regular file of at most %d bytes", src, maxLibBytes)
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	fi, err := in.Stat()
-	if err != nil {
-		return err
-	}
-	if !fi.Mode().IsRegular() || fi.Size() > maxLibBytes {
-		return fmt.Errorf("rootfs: %s is not a regular file of at most %d bytes", src, int64(maxLibBytes))
-	}
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fi.Mode().Perm()|0o200)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, io.LimitReader(in, maxLibBytes)); err != nil {
+	if _, err := ioCopy(out, io.LimitReader(in, maxLibBytes)); err != nil {
 		out.Close()
 		return err
 	}
@@ -712,10 +713,7 @@ func (c *rootfsCloser) interp(f *elf.File, name string, depth int) error {
 	link := filepath.Join(parent, base)
 	if link != dst {
 		if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {
-			target, err := filepath.Rel(parent, dst)
-			if err != nil {
-				return err
-			}
+			target, _ := filepath.Rel(parent, dst) // both are under root: Rel cannot fail
 			if err := os.Symlink(target, link); err != nil {
 				return err
 			}

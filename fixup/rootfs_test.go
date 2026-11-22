@@ -17,6 +17,11 @@ type synth struct {
 	runpath string
 	interp  string
 	dlopen  string // JSON of one .note.dlopen note; "" for none
+
+	// Header lies, to reach what an honest file never does.
+	interpFilesz uint64 // PT_INTERP p_filesz, when not the string's length
+	noteType     uint32 // the .note.dlopen section type, when not SHT_NOTE
+	noteSize     uint64 // the .note.dlopen section size, when not the note's length
 }
 
 func dlopenNote(json string) []byte {
@@ -93,7 +98,14 @@ func (s synth) bytes() []byte {
 		{nameOf(".dynamic"), 6, 0, 0, dynOff, uint64(dyn.Len()), 1, 0, 8, 16},
 	}
 	if note != nil {
-		shs = append(shs, sh{nameOf(".note.dlopen"), 7, 0, 0, noteOff, uint64(len(note)), 0, 0, 4, 0})
+		typ, size := uint32(7), uint64(len(note))
+		if s.noteType != 0 {
+			typ = s.noteType
+		}
+		if s.noteSize != 0 {
+			size = s.noteSize
+		}
+		shs = append(shs, sh{nameOf(".note.dlopen"), typ, 0, 0, noteOff, size, 0, 0, 4, 0})
 	}
 	shs = append(shs, sh{nameOf(".shstrtab"), 3, 0, 0, shstrOff, uint64(len(shstr)), 0, 0, 1, 0})
 
@@ -106,7 +118,11 @@ func (s synth) bytes() []byte {
 		_ = binary.Write(&out, le, v)
 	}
 	if phnum == 1 {
-		for _, v := range []any{uint32(3), uint32(4), interpOff, uint64(0), uint64(0), uint64(len(interp)), uint64(len(interp)), uint64(1)} {
+		fsz := uint64(len(interp))
+		if s.interpFilesz != 0 {
+			fsz = s.interpFilesz
+		}
+		for _, v := range []any{uint32(3), uint32(4), interpOff, uint64(0), uint64(0), fsz, fsz, uint64(1)} {
 			_ = binary.Write(&out, le, v)
 		}
 	}
