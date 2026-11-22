@@ -177,6 +177,8 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	mirrorFrom := fs.String("mirror-from", "", "instead of building, copy each artifact from this upstream pkgx dist (e.g. https://dist.pkgx.dev) and republish it signed + attested — for versions we cannot or need not rebuild, such as ancient glibc")
 	noPublish := fs.Bool("no-publish", envBool("NO_PUBLISH"),
 		"BUILD and stage each artifact under --artifacts, and push nothing. Not a dry run: the compile, the staging, the packing and the package's own test all happen — only the one irreversible step is skipped. This is what lets a recipe be built TWICE and the two artifacts compared (`zpkb reproduce`) without publishing a second copy of something already published")
+	stageOnly := fs.Bool("stage-only", envBool("STAGE_ONLY"),
+		"BUILD, stage each artifact under --artifacts and write everything a publish needs to "+stagePlanName+" beside them, then push nothing and sign nothing. `zpkb publish-stage` reads that plan and does the pushing, so the step that RUNS recipe code never holds the signing key or the registry credentials. Refused with --sign, with $SIGNING_KEY set, and with --mirror-from (a mirror runs no recipe)")
 	rebuild := fs.Bool("rebuild", envBool("REBUILD"), "publish a build of an ALREADY-PUBLISHED version as the next `_N` rebuild instead of replacing its tag — Homebrew's `rebuild`, Debian's `+bN`. For a recipe fix that changes the binary without changing the upstream version: fftw gained SIMD codelets and went out as the same 3.3.11, so nothing could tell the two apart. NOT folded into --force, which every manual darwin dispatch already sets: a counter minted on every forced run would bump N each time a lane was retried. ⛔ upstream pkgx/libpkgx cannot parse `_N` at all, so a project carrying one is unreadable to an upstream client")
 	requireOrigin := fs.Bool("require-origin", false, "with --mirror-from, PROMOTE instead of mirror: refuse any artifact whose source provenance does not prove the host toolchain was unused, and carry that verdict forward instead of restating it as ours. This is how a sovereign seed reaches the production registry — generations 0 and 1 publish only to a throwaway registry, and `bk origin` is the only thing that can tell one of their artifacts from a host-built one")
 	libc := fs.String("libc", "", `C library to link against: "zpkx" targets the gnu.org/glibc artifact instead of the build container's`)
@@ -233,7 +235,24 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 			"Mirroring IS publishing: there is no build here to keep.")
 		return 2
 	}
-	if *noPublish && *rebuild {
+	// ⛔ --stage-only EXISTS SO THE KEY IS NOT IN THE PROCESS THAT RUNS RECIPES.
+	// A run that accepted one anyway would look the same and protect nothing.
+	if *stageOnly {
+		switch {
+		case *mirrorFrom != "":
+			fmt.Fprintln(stderr, "factory: --stage-only with --mirror-from has nothing to stage: a mirror runs no recipe, "+
+				"so it publishes directly.")
+			return 2
+		case *signKey != "":
+			fmt.Fprintln(stderr, "factory: --stage-only refuses --sign: the signing key is read only by `zpkb publish-stage`.")
+			return 2
+		case os.Getenv("SIGNING_KEY") != "":
+			fmt.Fprintln(stderr, "factory: --stage-only refuses to run with $SIGNING_KEY set: the process that runs recipes must not hold the signing key. Pass it to `zpkb publish-stage` instead.")
+			return 2
+		}
+		*noPublish = true
+	}
+	if *noPublish && *rebuild && !*stageOnly {
 		fmt.Fprintln(stderr, "factory: --rebuild asks the registry for the next free `_N` so a new tag can be pushed "+
 			"beside the published one. With --no-publish nothing is pushed, so the counter would be minted against a "+
 			"registry that never sees the result.")
@@ -285,12 +304,18 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "advisories: %d project(s) with records, from %s\n", advisoryCount, *advisories)
 	}
 
-	kp, err := factorySigningKey(*signKey)
-	if err != nil {
-		fmt.Fprintln(stderr, "factory:", err)
-		return 1
+	var kp *sign.Keypair
+	if *stageOnly {
+		fmt.Fprintln(stdout, "signing: deferred to `zpkb publish-stage` (--stage-only)")
+	} else {
+		var kerr error
+		kp, kerr = factorySigningKey(*signKey)
+		if kerr != nil {
+			fmt.Fprintln(stderr, "factory:", kerr)
+			return 1
+		}
+		fmt.Fprintln(stdout, "signing:", map[bool]string{true: "enabled", false: "disabled (no key)"}[kp != nil])
 	}
-	fmt.Fprintln(stdout, "signing:", map[bool]string{true: "enabled", false: "disabled (no key)"}[kp != nil])
 
 	// Local recipe overrides: candidate fixes for genuine upstream-recipe bugs,
 	// applied to the pantry before the closure is computed so we validate them
@@ -440,6 +465,18 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		testCounts:  map[testState]int{},
 		stdout:      stdout, stderr: stderr,
 	}
+	if *stageOnly {
+		// A plan already in the stage is carried forward, so several factory runs
+		// (one per chunk) can fill one stage. One this run cannot read is a
+		// refusal, never an overwrite: it may be the record of builds not yet
+		// published.
+		plan, perr := loadStagePlan(*artifacts, *to, *platform, f.when)
+		if perr != nil {
+			fmt.Fprintln(stderr, "factory:", perr)
+			return 1
+		}
+		f.stage = plan
+	}
 	if f.mirror != "" {
 		if err := setUpstreamDist(f.mirror, f.requireOrigin); err != nil {
 			fmt.Fprintln(stderr, "factory:", err)
@@ -500,6 +537,13 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	if f.stage != nil {
+		if err := writeStagePlan(*artifacts, f.stage); err != nil {
+			fmt.Fprintln(stderr, "factory:", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "stage plan: %d artifact(s) in %s\n", len(f.stage.Artifacts), filepath.Join(*artifacts, stagePlanName))
+	}
 	if err := os.WriteFile(*failures, f.failures.Bytes(), 0o644); err != nil {
 		fmt.Fprintln(stderr, "factory:", err)
 	}
@@ -568,7 +612,10 @@ type factory struct {
 	// the one irreversible part. A flag that also skipped the build would be
 	// useless for the question it exists for.
 	noPublish bool
-	want      string // pkgx constraint the requested projects' versions must satisfy, "" = any
+	// stage, when set (--stage-only), collects what a later `zpkb publish-stage`
+	// needs for every artifact this run staged.
+	stage *stagePlan
+	want  string // pkgx constraint the requested projects' versions must satisfy, "" = any
 	// demands is what the DEPENDENTS of a project asked for, collected by the
 	// closure walk. A closure-only dependency is resolved against it instead of
 	// against "*", so the factory stops building a version nobody can use.
@@ -890,8 +937,23 @@ func (f *factory) buildOne(rec *pantry.Recipe, proj, ver string) {
 	// later step that reads f.pushed (the catalogue, the index) must not be
 	// told otherwise.
 	if f.noPublish {
-		fmt.Fprintf(f.stdout, "✅ BUILT %s %s %s — not published (--no-publish): %s\n",
-			proj, buildTag(proj, res.Version, f.glibc, res.Concrete), f.platform, res.ArtifactPath)
+		flag := "--no-publish"
+		if f.stage != nil {
+			// publishVersion, not res.Version: it carries the `_N` of a rebuild,
+			// which the later publish needs for the tag.
+			if err := f.stage.addBuilt(f.artifacts, publishOptions{
+				Project: proj, Version: publishVersion, OS: f.osn, Arch: f.arch,
+				Path: res.ArtifactPath, Glibc: f.glibc, Source: res.Source, BuildEnv: res.BuildEnv,
+				Origin:   provOrigin{Bootstrap: boolParam(f.runner.Bootstrap), Dist: f.dist},
+				Concrete: res.Concrete,
+			}); err != nil {
+				f.fail(proj, res.Version, "stage", err)
+				return
+			}
+			flag = "--stage-only"
+		}
+		fmt.Fprintf(f.stdout, "✅ BUILT %s %s %s — not published (%s): %s\n",
+			proj, buildTag(proj, res.Version, f.glibc, res.Concrete), f.platform, flag, res.ArtifactPath)
 		f.ok++
 		f.testPublished(rec, proj, res.Version, res.SpecHash)
 		f.dropBuildTree(proj, res.Version, res.SpecHash)
