@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"critical\":{\"image\":{\"docker-manifest-digest\":\"sha256:00\"}},\"optional\":{\"zpkb-sovereign\":1,\"zpkb-provenance-sha256\":[\"x\"]}}")

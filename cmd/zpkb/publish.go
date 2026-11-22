@@ -760,6 +760,9 @@ func buildParams(project, version, osn, arch string, o provOrigin) map[string]st
 	if o.Bootstrap != "" {
 		p["bootstrap"] = o.Bootstrap
 	}
+	if o.Sovereign != "" {
+		p["sovereign"] = o.Sovereign
+	}
 	if o.Dist != "" {
 		p["inputs-from"] = o.Dist
 	}
@@ -797,6 +800,16 @@ type provOrigin struct {
 	// Bootstrap is "1" when the build took its compiler and shell from the
 	// host distribution, "0" when it did not, and "" when nothing was stated.
 	Bootstrap string
+	// Sovereign is "1" when the build MEASURED that it ran inside the sovereign
+	// rootfs (see sovereignClaim), "0" when it did not, "" when nothing was
+	// stated. bootstrap=0 only says the flag was not passed: a build that
+	// used the runner's own compiler also has it. Promotion requires "1", and
+	// reads it from the signed payload, not from the provenance.
+	Sovereign string
+	// Digest is the artifact digest an authenticated read of the origin was
+	// made for. Never written; it lets a caller check that the bytes it later
+	// downloads are the ones that were vouched for.
+	Digest string
 	// Dist is the registry the build RESOLVED ITS INPUTS FROM — the fact that
 	// distinguishes an artifact built against the seed's loopback registry from
 	// one built against ghcr, which no digest or signature can show.
@@ -852,7 +865,14 @@ func buildReferrers(project, version, osn, arch string, tarball []byte, src buil
 		{ArtifactType: artifactInToto, MediaType: artifactInToto, Blob: pr},
 	}
 	if kp != nil {
-		payload, err := simpleSigning(purl, "sha256:"+dg)
+		// The signature names the provenance by digest, so the provenance is
+		// authenticated by it and a gate need not trust what the registry
+		// serves beside the artifact. See originauth.go.
+		psum := sha256.Sum256(pr)
+		payload, err := originSigning(purl, "sha256:"+dg, originClaims{
+			Provenance: hex.EncodeToString(psum[:]),
+			Sovereign:  origin.Sovereign,
+		})
 		if err != nil {
 			return nil, err
 		}

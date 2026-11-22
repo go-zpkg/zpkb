@@ -257,10 +257,11 @@ func TestOriginReportsEachOfTheThreeStates(t *testing.T) {
 // status; printing a reassurance on success would make a script that ignores
 // the status look like it checked something.
 func TestPromotableIsSilentOnYesAndLoudOnNo(t *testing.T) {
+	t.Setenv("ZPKG_VERIFY", "1")
 	t.Run("yes", func(t *testing.T) {
-		stubAttestations(t, originRefs(t, provOrigin{Bootstrap: "0", Dist: "oci://ghcr.io/go-zpkg/packages"}), nil)
+		stubVerified(t, provOrigin{Bootstrap: "0", Sovereign: "1", Dist: "oci://ghcr.io/go-zpkg/packages"}, nil)
 		var out, errOut bytes.Buffer
-		if code := runOrigin(originArgs("--promotable"), &out, &errOut); code != 0 {
+		if code := runOrigin(originArgs("--dist", "oci://x/y", "--promotable"), &out, &errOut); code != 0 {
 			t.Fatalf("a sovereign artifact was refused: %d %q", code, errOut.String())
 		}
 		if out.Len() != 0 || errOut.Len() != 0 {
@@ -268,13 +269,13 @@ func TestPromotableIsSilentOnYesAndLoudOnNo(t *testing.T) {
 		}
 	})
 	for _, c := range []struct{ name, bootstrap, want string }{
-		{"bootstrap", "1", "--bootstrap"},
-		{"unreadable", "maybe", "neither 0 nor 1"},
+		{"bootstrap", "1", "bootstrap=\"1\""},
+		{"unreadable", "maybe", "bootstrap=\"maybe\""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			stubAttestations(t, originRefs(t, provOrigin{Bootstrap: c.bootstrap, Dist: "oci://x/y"}), nil)
+			stubVerified(t, provOrigin{Bootstrap: c.bootstrap, Sovereign: "1", Dist: "oci://x/y"}, nil)
 			var out, errOut bytes.Buffer
-			if code := runOrigin(originArgs("--promotable"), &out, &errOut); code != 1 {
+			if code := runOrigin(originArgs("--dist", "oci://x/y", "--promotable"), &out, &errOut); code != 1 {
 				t.Fatalf("runOrigin = %d, want 1", code)
 			}
 			if !strings.Contains(errOut.String(), c.want) {

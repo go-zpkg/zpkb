@@ -54,6 +54,21 @@ func runOrigin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "origin:", err)
 		return 2
 	}
+	// ⛔ THE GATE READS THE SIGNED FACTS, NOT THE REFERRER. -promotable answers
+	// from verifiedOrigin alone; the unauthenticated provenance below is only
+	// what a human is shown.
+	if *promotable {
+		if err := promotionPreconditions(*dist); err != nil {
+			fmt.Fprintln(stderr, "origin:", err)
+			return 1
+		}
+		if _, err := verifiedOrigin(*dist, project, version, osn, arch); err != nil {
+			fmt.Fprintf(stderr, "origin: %s %s (%s/%s): %v\n",
+				project, version, osn, arch, err)
+			return 1
+		}
+		return 0
+	}
 	refs, err := sourceAttestations(*dist, project, version, osn, arch)
 	if err != nil {
 		fmt.Fprintf(stderr, "origin: %s %s (%s/%s): %v\n", project, version, osn, arch, err)
@@ -61,23 +76,14 @@ func runOrigin(args []string, stdout, stderr io.Writer) int {
 	}
 	o, err := originAttestedBy(refs)
 	if err != nil {
-		// Reported as a refusal under -promotable and as a fact otherwise: the
-		// absence is the honest state of every artifact published before this
-		// existed, and a sweep that called those broken would condemn the
+		// The absence is the honest state of every artifact published before
+		// this existed, and a sweep that called those broken would condemn the
 		// whole registry.
 		fmt.Fprintf(stderr, "origin: %s %s (%s/%s): %v\n", project, version, osn, arch, err)
 		return 1
 	}
-
-	if *promotable {
-		if o.Bootstrap != "0" {
-			fmt.Fprintf(stderr, "origin: %s %s (%s/%s) is NOT promotable: %s\n",
-				project, version, osn, arch, o.why())
-			return 1
-		}
-		return 0
-	}
 	fmt.Fprintf(stdout, "%s %s %s/%s\n", project, version, osn, arch)
+	fmt.Fprintln(stdout, "  (read from the registry unauthenticated; --promotable checks the signature)")
 	fmt.Fprintf(stdout, "  host toolchain used: %s\n", o.bootstrapWords())
 	if o.Dist == "" {
 		fmt.Fprintln(stdout, "  inputs resolved from: not recorded")
@@ -140,7 +146,7 @@ func originAttestedBy(refs []artifact.Referrer) (provOrigin, error) {
 		return provOrigin{}, fmt.Errorf("provenance: %w", err)
 	}
 	p := stmt.Predicate.BuildDefinition.ExternalParameters
-	o := provOrigin{Bootstrap: p["bootstrap"], Dist: p["inputs-from"]}
+	o := provOrigin{Bootstrap: p["bootstrap"], Sovereign: p["sovereign"], Dist: p["inputs-from"]}
 	if o.Bootstrap == "" && o.Dist == "" {
 		return o, errNoOrigin
 	}
@@ -161,16 +167,11 @@ var errNoOrigin = fmt.Errorf("the provenance records no build origin (published 
 // no". The caller fails the project with the reason, so the run's own log
 // says which of the two happened.
 func (f *factory) promotableOrigin(proj, tag string) (provOrigin, error) {
-	refs, err := sourceAttestations(f.mirror, proj, tag, f.osn, f.arch)
-	if err != nil {
-		return provOrigin{}, fmt.Errorf("cannot read the source provenance from %s: %w", f.mirror, err)
-	}
-	o, err := originAttestedBy(refs)
-	if err != nil {
+	// ⛔ AUTHENTICATED, NOT READ. The provenance referrer carries no signature, so
+	// it is believed only when a signature by a trusted key, over this exact
+	// artifact, names its digest. See originauth.go.
+	if err := promotionPreconditions(f.mirror); err != nil {
 		return provOrigin{}, err
 	}
-	if o.Bootstrap != "0" {
-		return provOrigin{}, fmt.Errorf("not promotable: %s", o.why())
-	}
-	return o, nil
+	return verifiedOrigin(f.mirror, proj, tag, f.osn, f.arch)
 }
