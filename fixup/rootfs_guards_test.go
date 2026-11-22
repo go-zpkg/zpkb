@@ -76,7 +76,12 @@ func TestResolveInGuards(t *testing.T) {
 		}
 	})
 	t.Run("too many components", func(t *testing.T) {
-		_, err := resolveIn(newRoot(t), strings.Repeat("a/", maxResolveComps+1), true, true)
+		// ".." at the root is clamped, so a path of them costs nothing to resolve.
+		root := newRoot(t)
+		if p, err := resolveIn(root, strings.Repeat("../", maxResolveComps), true, false); err != nil || p != root {
+			t.Fatalf("exactly the bound: %q %v", p, err)
+		}
+		_, err := resolveIn(root, strings.Repeat("../", maxResolveComps+1), true, false)
 		if err == nil || !strings.Contains(err.Error(), "too long") {
 			t.Fatalf("got %v", err)
 		}
@@ -152,8 +157,8 @@ func TestValidRootfsSubdirNamesAnEmptyKey(t *testing.T) {
 }
 
 func TestCloseRootfsRefusesABadSubdir(t *testing.T) {
-	if _, err := CloseRootfs(t.TempDir(), "../x", nil, nil); err == nil {
-		t.Fatal("a subdirectory escaping the prefix was accepted")
+	if _, err := CloseRootfs(t.TempDir(), "../x", nil, nil); err == nil || !strings.Contains(err.Error(), "build.rootfs") {
+		t.Fatalf("got %v", err)
 	}
 }
 
@@ -421,7 +426,7 @@ func TestRootfsClosureInstallGuards(t *testing.T) {
 		putFile(t, filepath.Join(f.rootfs, "usr/bin/app"), app)
 		putFile(t, filepath.Join(f.dep, "lib/libA.so.1"), synth{}.bytes())
 		chmod(t, filepath.Join(f.rootfs, "usr"), 0o555)
-		mustFail(t, f, "usr/lib")
+		mustFail(t, f, "rootfs: usr/lib: ")
 	})
 	t.Run("lib dir read-only", func(t *testing.T) {
 		needPerms(t)
@@ -529,7 +534,7 @@ func TestFixUpReturnsTheClosureError(t *testing.T) {
 }
 
 func TestParseDlopenNotesBound(t *testing.T) {
-	if _, err := ParseDlopenNotes(make([]byte, maxDlopenBytes+1), binary.LittleEndian); err == nil {
-		t.Fatal("a section over the bound was parsed")
+	if _, err := ParseDlopenNotes(make([]byte, maxDlopenBytes+1), binary.LittleEndian); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("got %v", err)
 	}
 }
