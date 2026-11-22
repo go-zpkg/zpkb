@@ -9,7 +9,7 @@ import (
 )
 
 // promoteFactory is a factory configured the way a promotion runs: copying
-// from the seed's loopback registry into the production one.
+// from the seed's registry into the production one.
 func promoteFactory() *factory {
 	return &factory{
 		osn: "linux", arch: "s390x", platform: "linux/s390x",
@@ -19,17 +19,21 @@ func promoteFactory() *factory {
 	}
 }
 
+// sovereignSource is what a build that measured itself sovereign records.
+var sovereignSource = provOrigin{Bootstrap: "0", Sovereign: "1", Dist: "oci://127.0.0.1:5000/seed"}
+
 // ⛔ TestPromotionRefusesABootstrapArtifact is the rule the whole feature
 // exists for: generations 0 and 1 publish to a throwaway registry because
 // their artifacts were driven by the host's compiler, and this is what stops
 // one of them reaching production under our signature.
 func TestPromotionRefusesABootstrapArtifact(t *testing.T) {
-	stubAttestations(t, originRefs(t, provOrigin{Bootstrap: "1", Dist: "oci://127.0.0.1:5000/seed"}), nil)
+	t.Setenv("ZPKG_VERIFY", "1")
+	stubVerified(t, provOrigin{Bootstrap: "1", Sovereign: "0", Dist: "oci://127.0.0.1:5000/seed"}, nil)
 	_, err := promoteFactory().promotableOrigin("lz4.org", "1.10.0")
 	if err == nil {
 		t.Fatal("a --bootstrap artifact was accepted for promotion")
 	}
-	for _, want := range []string{"not promotable", "--bootstrap", "host"} {
+	for _, want := range []string{"not promotable", "sovereign"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not mention %q: %v", want, err)
 		}
@@ -40,9 +44,26 @@ func TestPromotionRefusesABootstrapArtifact(t *testing.T) {
 // recorded an origin is in this state, and so is every mirrored one. Silence
 // is the commonest answer, so it is the one most likely to be waved through.
 func TestPromotionRefusesASilentProvenance(t *testing.T) {
-	stubAttestations(t, originRefs(t, provOrigin{}), nil)
+	t.Setenv("ZPKG_VERIFY", "1")
+	stubVerified(t, provOrigin{}, nil)
 	if _, err := promoteFactory().promotableOrigin("lz4.org", "1.10.0"); err == nil {
 		t.Fatal("an artifact whose provenance says nothing was accepted for promotion")
+	}
+}
+
+// ⛔ TestPromotionRefusesAnOldBootstrapZeroArtifact is finding 5: bootstrap=0
+// says only that a flag was absent, and a build with the runner's own gcc
+// satisfies it. Such an artifact, correctly signed and with a matching
+// provenance, has no sovereign fact in its signature and is refused.
+func TestPromotionRefusesAnOldBootstrapZeroArtifact(t *testing.T) {
+	t.Setenv("ZPKG_VERIFY", "1")
+	stubVerified(t, provOrigin{Bootstrap: "0", Dist: "oci://127.0.0.1:5000/seed"}, nil)
+	_, err := promoteFactory().promotableOrigin("lz4.org", "1.10.0")
+	if err == nil {
+		t.Fatal("an artifact that only says bootstrap=0 was accepted for promotion")
+	}
+	if !strings.Contains(err.Error(), "sovereign") {
+		t.Errorf("the refusal does not name the missing fact: %v", err)
 	}
 }
 
@@ -51,12 +72,13 @@ func TestPromotionRefusesASilentProvenance(t *testing.T) {
 // a verdict, the other is an outage, and a gate that folds them together
 // turns every network blip into a permanent judgement about an artifact.
 func TestPromotionDistinguishesCannotAskFromNo(t *testing.T) {
-	stubAttestations(t, nil, errors.New("dial tcp 127.0.0.1:5000: connection refused"))
+	t.Setenv("ZPKG_VERIFY", "1")
+	stubVerified(t, provOrigin{}, errors.New("dial tcp 127.0.0.1:5000: connection refused"))
 	_, err := promoteFactory().promotableOrigin("lz4.org", "1.10.0")
 	if err == nil {
 		t.Fatal("an unreachable source registry was accepted")
 	}
-	if !strings.Contains(err.Error(), "cannot read the source provenance") {
+	if !strings.Contains(err.Error(), "cannot read or authenticate the source provenance") {
 		t.Errorf("the error does not say the source could not be read: %v", err)
 	}
 	if !strings.Contains(err.Error(), "127.0.0.1:5000") {
@@ -74,15 +96,17 @@ func TestPromotionDistinguishesCannotAskFromNo(t *testing.T) {
 // make — and would also lose `inputs-from`, which is the only record that the
 // artifact was built against the seed and not against ghcr.
 func TestPromotionCarriesTheVerdictRatherThanRestatingIt(t *testing.T) {
-	src := provOrigin{Bootstrap: "0", Dist: "oci://127.0.0.1:5000/seed"}
-	stubAttestations(t, originRefs(t, src), nil)
+	t.Setenv("ZPKG_VERIFY", "1")
+	stubVerified(t, sovereignSource, nil)
 
 	got, err := promoteFactory().promotableOrigin("lz4.org", "1.10.0")
 	if err != nil {
 		t.Fatalf("a sovereign artifact was refused: %v", err)
 	}
-	if got != src {
-		t.Errorf("origin = %+v, want the source's %+v carried through", got, src)
+	want := sovereignSource
+	want.Digest = testDigest
+	if got != want {
+		t.Errorf("origin = %+v, want the source's %+v carried through", got, want)
 	}
 	// Specifically: NOT rewritten to the destination registry.
 	if got.Dist == "oci://ghcr.io/go-zpkg/packages" {
@@ -107,16 +131,19 @@ func TestRequireOriginNeedsAMirrorSource(t *testing.T) {
 // source whose provenance states `origin`, and reports what was published.
 func promoteRun(t *testing.T, origin provOrigin, srcErr error) (code int, h *factoryHarness) {
 	t.Helper()
+	t.Setenv("ZPKG_VERIFY", "1")
 	h = newFactoryHarness(t)
-	prevDown, prevVers := factoryDownload, factoryUpstreamVersions
-	t.Cleanup(func() { factoryDownload, factoryUpstreamVersions = prevDown, prevVers })
+	prevDown, prevVers, prevDist := factoryDownload, factoryUpstreamVersions, artifact.DistBase
+	t.Cleanup(func() {
+		factoryDownload, factoryUpstreamVersions, artifact.DistBase = prevDown, prevVers, prevDist
+	})
 	factoryUpstreamVersions = func(string, string, string) ([]artifact.Ver, error) {
 		return []artifact.Ver{artifact.ParseVer("1.0")}, nil
 	}
 	factoryDownload = func(string, string, string, string) ([]byte, string, error) {
-		return []byte("artifact"), artifact.ExtTarXz, nil
+		return testTarball, artifact.ExtTarXz, nil
 	}
-	stubAttestations(t, originRefs(t, origin), srcErr)
+	stubVerified(t, origin, srcErr)
 
 	code = h.run(t, "--recipes", "lib.org", "--to", "oci://example.test/pkgs",
 		"--mirror-from", "oci://127.0.0.1:5000/seed", "--require-origin")
@@ -134,9 +161,10 @@ func TestAPromotionRunPublishesNothingItCannotVouchFor(t *testing.T) {
 		srcErr error
 		reason string
 	}{
-		{"bootstrap", provOrigin{Bootstrap: "1", Dist: "oci://127.0.0.1:5000/seed"}, nil, "--bootstrap"},
-		{"silent", provOrigin{}, nil, "no build origin"},
-		{"unreachable source", provOrigin{}, errors.New("connection refused"), "cannot read the source provenance"},
+		{"bootstrap", provOrigin{Bootstrap: "1", Sovereign: "0", Dist: "oci://127.0.0.1:5000/seed"}, nil, "sovereign"},
+		{"silent", provOrigin{}, nil, "sovereign"},
+		{"old bootstrap=0 only", provOrigin{Bootstrap: "0", Dist: "oci://127.0.0.1:5000/seed"}, nil, "sovereign"},
+		{"unreachable source", provOrigin{}, errors.New("connection refused"), "cannot read or authenticate the source provenance"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, h := promoteRun(t, c.origin, c.srcErr)
@@ -163,11 +191,62 @@ func TestAPromotionRunPublishesNothingItCannotVouchFor(t *testing.T) {
 // TestAPromotionRunPublishesASovereignArtifact: the positive control. Without
 // it, every test above would pass on a gate that refuses everything.
 func TestAPromotionRunPublishesASovereignArtifact(t *testing.T) {
-	code, h := promoteRun(t, provOrigin{Bootstrap: "0", Dist: "oci://127.0.0.1:5000/seed"}, nil)
+	code, h := promoteRun(t, sovereignSource, nil)
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %s", code, h.errb.String())
 	}
 	if len(h.published) == 0 {
 		t.Fatal("a sovereign artifact was not promoted, so the gate refuses everything")
 	}
+}
+
+// ⛔ TestAPromotionRefusesBytesOtherThanTheOnesVouchedFor: the origin was
+// authenticated for one digest, and a registry may answer the download with
+// another tarball. It is the call that republishes under our key.
+func TestAPromotionRefusesBytesOtherThanTheOnesVouchedFor(t *testing.T) {
+	t.Setenv("ZPKG_VERIFY", "1")
+	h := newFactoryHarness(t)
+	prevDown, prevVers, prevDist := factoryDownload, factoryUpstreamVersions, artifact.DistBase
+	t.Cleanup(func() {
+		factoryDownload, factoryUpstreamVersions, artifact.DistBase = prevDown, prevVers, prevDist
+	})
+	factoryUpstreamVersions = func(string, string, string) ([]artifact.Ver, error) {
+		return []artifact.Ver{artifact.ParseVer("1.0")}, nil
+	}
+	factoryDownload = func(string, string, string, string) ([]byte, string, error) {
+		return []byte("a forged tarball"), artifact.ExtTarXz, nil
+	}
+	stubVerified(t, sovereignSource, nil)
+	h.run(t, "--recipes", "lib.org", "--to", "oci://example.test/pkgs",
+		"--mirror-from", "oci://127.0.0.1:5000/seed", "--require-origin")
+	if len(h.published) != 0 {
+		t.Fatal("a tarball other than the authenticated one was republished")
+	}
+	if d := h.detailFile(t); !strings.Contains(d, "whose origin was authenticated") {
+		t.Errorf("the refusal does not say why:\n%s", d)
+	}
+}
+
+// ⛔ TestRequireOriginRefusesWhatCannotBeAuthenticated: a non-OCI mirror has no
+// signatures, and ZPKG_VERIFY=0 reads them without checking. Both are refused
+// before anything runs, with exit 2, and neither switches verification off.
+func TestRequireOriginRefusesWhatCannotBeAuthenticated(t *testing.T) {
+	t.Run("non-oci mirror", func(t *testing.T) {
+		t.Setenv("ZPKG_VERIFY", "1")
+		h := newFactoryHarness(t)
+		code := h.run(t, "--recipes", "lib.org", "--to", "oci://example.test/pkgs",
+			"--require-origin", "--mirror-from", "https://dist.example")
+		if code != 2 || !strings.Contains(h.errb.String(), "oci://") || len(h.published) != 0 {
+			t.Errorf("code = %d, stderr = %q", code, h.errb.String())
+		}
+	})
+	t.Run("verification off", func(t *testing.T) {
+		t.Setenv("ZPKG_VERIFY", "0")
+		h := newFactoryHarness(t)
+		code := h.run(t, "--recipes", "lib.org", "--to", "oci://example.test/pkgs",
+			"--require-origin", "--mirror-from", "oci://127.0.0.1:5000/seed")
+		if code != 2 || !strings.Contains(h.errb.String(), "ZPKG_VERIFY") || len(h.published) != 0 {
+			t.Errorf("code = %d, stderr = %q", code, h.errb.String())
+		}
+	})
 }

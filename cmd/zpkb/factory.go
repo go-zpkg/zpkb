@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -391,6 +393,12 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	runner.LibcMode = *libc
 	runner.Glibc = *glibc
 	runner.Bootstrap = *bootstrap
+	sovereignState, why := sovereignClaim(*libc, *bootstrap, sovereignRoot)
+	if sovereignState == "1" {
+		fmt.Fprintln(stdout, "sovereign: yes — recorded in the signed claim")
+	} else {
+		fmt.Fprintf(stdout, "sovereign: no (%s) — these artifacts cannot be promoted\n", why)
+	}
 	// Emulation is why this is reachable at all: on an aarch64 rootfs run
 	// through qemu-user, `make --jobs 32` exhausts the emulated address space
 	// and bash stops being able to allocate —
@@ -410,6 +418,7 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		force: *force, key: kp, when: factoryTime(),
 		mirror:           strings.TrimRight(*mirrorFrom, "/"),
 		requireOrigin:    *requireOrigin,
+		sovereign:        sovereignState,
 		rebuild:          *rebuild,
 		noPublish:        *noPublish,
 		want:             strings.TrimSpace(*versionSpec),
@@ -432,7 +441,10 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		stdout:      stdout, stderr: stderr,
 	}
 	if f.mirror != "" {
-		setUpstreamDist(f.mirror)
+		if err := setUpstreamDist(f.mirror, f.requireOrigin); err != nil {
+			fmt.Fprintln(stderr, "factory:", err)
+			return 2
+		}
 		fmt.Fprintf(stdout, "mirror: copying artifacts from %s (no build)\n", f.mirror)
 	}
 
@@ -534,6 +546,9 @@ type factory struct {
 	// and carry that verdict into the republished attestation rather than
 	// re-stating it as our own.
 	requireOrigin bool
+	// sovereign is "1" or "0": whether THIS machine is a sovereign rootfs, as
+	// measured by sovereignClaim when the factory started.
+	sovereign string
 	// rebuild mints a `_N` counter when the version being built is already
 	// published here, instead of replacing its tag. See rebuild.go.
 	rebuild bool
@@ -893,7 +908,11 @@ func (f *factory) buildOne(rec *pantry.Recipe, proj, ver string) {
 		// artifact we only mirrored, and so was every artifact published before
 		// the field existed. A promotion gate needs the difference said out
 		// loud (go-zpkg/packages#316).
-		Origin: provOrigin{Bootstrap: boolParam(f.runner.Bootstrap), Dist: f.dist},
+		//
+		// And bootstrap=0 only says a flag was absent, which a build with the
+		// runner's own gcc also satisfies, so what a promotion reads is
+		// Sovereign: MEASURED once at start-up from the machine itself.
+		Origin: provOrigin{Bootstrap: boolParam(f.runner.Bootstrap), Sovereign: f.sovereign, Dist: f.dist},
 		// What this build IS. It becomes the tag's `-h<hash>` and the
 		// manifest's spec annotation, which artifact.VerifySpec checks against
 		// each other — so the two cannot be published out of step.
@@ -1116,6 +1135,16 @@ func (f *factory) mirrorOne(proj, ver string) {
 		f.fail(proj, ver, "fetch", err)
 		return
 	}
+	// ⛔ THE BYTES SIGNED ARE THE BYTES VOUCHED FOR. The origin was authenticated
+	// for one digest; a registry could answer the download with another
+	// validly signed tarball, and this is the call that republishes it.
+	if f.requireOrigin {
+		sum := sha256.Sum256(data)
+		if got := "sha256:" + hex.EncodeToString(sum[:]); got != srcOrigin.Digest {
+			f.fail(proj, ver, "fetch", fmt.Errorf("the download is %s, not the %s whose origin was authenticated", got, srcOrigin.Digest))
+			return
+		}
+	}
 	// Stage it in the same pkgx dist layout a build writes, so the Pages mirror
 	// picks a mirrored artifact up exactly like a built one.
 	dir := filepath.Join(f.artifacts, filepath.FromSlash(proj), f.osn, f.arch)
@@ -1191,11 +1220,26 @@ func appendMissing(list, want []string) []string {
 // verifies by default, so verification is turned off for the copy unless the
 // operator demanded it — mirroring copies bytes, it does not install them, and
 // what we publish is re-signed with OUR key.
-func setUpstreamDist(from string) {
+//
+// ⛔ AN oci:// MIRROR KEEPS VERIFICATION ON. It used to be switched off for every
+// mirror, and what was then re-signed with the production key was whatever the
+// source served. A registry has signatures to check, so they are checked; only
+// a static dist, which cannot carry any, is copied unverified, and a promotion
+// (--require-origin) is refused for one.
+func setUpstreamDist(from string, requireOrigin bool) error {
+	if requireOrigin {
+		if err := promotionPreconditions(from); err != nil {
+			return err
+		}
+	}
 	artifact.DistBase = from
+	if strings.HasPrefix(from, "oci://") {
+		return nil
+	}
 	if _, ok := os.LookupEnv("ZPKG_VERIFY"); !ok {
 		os.Setenv("ZPKG_VERIFY", "0")
 	}
+	return nil
 }
 
 // fail records a failed (project, version) at a stage.

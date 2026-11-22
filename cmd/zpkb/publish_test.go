@@ -472,12 +472,12 @@ func TestBuildReferrers(t *testing.T) {
 	provJSON = pj
 
 	// simple-signing seam error
-	ss := simpleSigning
-	simpleSigning = func(string, string) ([]byte, error) { return nil, errBoom }
+	ss := originSigning
+	originSigning = func(string, string, originClaims) ([]byte, error) { return nil, errBoom }
 	if _, err := buildReferrers("p", "1", "linux", "x86-64", tarball, build.SourceRef{}, nil, time.Unix(0, 0).UTC(), kp, provOrigin{}); err == nil {
 		t.Error("expected simple-signing error")
 	}
-	simpleSigning = ss
+	originSigning = ss
 }
 
 func TestBuildTime(t *testing.T) {

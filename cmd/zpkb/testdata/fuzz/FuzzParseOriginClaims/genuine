@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"critical\":{\"identity\":{\"docker-reference\":\"pkg:generic/a@1\"},\"image\":{\"docker-manifest-digest\":\"sha256:00\"},\"type\":\"cosign container image signature\"},\"optional\":{\"zpkb-provenance-sha256\":\"ab\",\"zpkb-sovereign\":\"1\"}}")

@@ -36,6 +36,8 @@ type publishedArtifact struct {
 	// document from. Recorded because a mutation that dropped it on the way to
 	// publishArtifact — the whole feature — survived the suite without it.
 	advisories string
+	// origin is what the publish was told about how the artifact was built.
+	origin provOrigin
 }
 
 // factoryHarness stubs every factory seam (network, pantry, compiler) and
@@ -117,7 +119,7 @@ func newFactoryHarness(t *testing.T) *factoryHarness {
 		h.published = append(h.published, publishedArtifact{
 			project: o.Project, version: o.Version, tag: tag, osn: o.OS, arch: o.Arch,
 			dist: o.Dist, path: o.Path, glibc: o.Glibc, signed: o.Key != nil, when: o.Time,
-			advisories: o.Advisories,
+			advisories: o.Advisories, origin: o.Origin,
 		})
 		// A distinct digest per artifact, so a test can tell one published
 		// manifest from another the way the index check does.
@@ -992,7 +994,9 @@ func TestSetUpstreamDistKeepsAnExplicitVerify(t *testing.T) {
 	old := artifact.DistBase
 	t.Cleanup(func() { artifact.DistBase = old })
 	t.Setenv("ZPKG_VERIFY", "1")
-	setUpstreamDist("https://dist.example")
+	if err := setUpstreamDist("https://dist.example", false); err != nil {
+		t.Fatal(err)
+	}
 	if os.Getenv("ZPKG_VERIFY") != "1" {
 		t.Fatalf("ZPKG_VERIFY = %q", os.Getenv("ZPKG_VERIFY"))
 	}

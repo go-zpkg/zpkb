@@ -947,6 +947,29 @@ time, beside the other argument checks rather than further into the run: there
 is no source provenance to read, and a gate the operator believes ran is worse
 than no gate.
 
+#### What the gate authenticates
+
+The provenance a registry serves is not evidence on its own: whoever can write
+to the registry can write a provenance. `--require-origin` and
+`zpkb origin --promotable` therefore read the origin only through a signature:
+
+- the source must be an `oci://` registry and signature verification must be on
+  (`ZPKG_VERIFY` not `0`); `--mirror-from` keeps verification on for an `oci://`
+  source and a static dist is refused outright;
+- the artifact must be signed by a trusted key (the seed registry's key goes in
+  `ZPKG_EXTRA_TRUSTED_KEYS`), and that signature must name the sha256 of the
+  provenance it vouches for, so a provenance swapped or added later is ignored;
+- the provenance subject must be this artifact's digest, and the bytes
+  republished must be the bytes whose origin was authenticated.
+
+`bootstrap=0` only records that a flag was absent. The factory now also measures
+whether it runs in the sovereign rootfs (`--libc zpkx`, not `--bootstrap`, no
+system headers, and every compiler or linker on the standard paths one of
+zpkb's shell stubs) and signs the result as the `sovereign` fact. A promotion
+requires `sovereign=1` under the signature. Artifacts published before this
+change carry no signed `sovereign` fact and are refused until rebuilt; the
+refusal names the missing fact.
+
 ### What is still missing, named rather than left out
 
 The spec hash covers the **inputs**, as Nix's derivation hash and Spack's spec
