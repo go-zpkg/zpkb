@@ -1,6 +1,7 @@
 package build
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -35,6 +36,36 @@ func TestRootfsSubdir(t *testing.T) {
 				t.Fatalf("got %q, %v; want %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// TestBuildRefusesABadRootfsKeyAndAFailedFixUp: a malformed key stops the build
+// before the fix-up runs, and the fix-up's own refusal stops it too.
+func TestBuildRefusesABadRootfsKeyAndAFailedFixUp(t *testing.T) {
+	tgt := target.Target{Platform: "linux", Arch: "x86-64"}
+	for _, tc := range []struct {
+		name    string
+		rootfs  any
+		fixErr  error
+		wantErr string
+		ran     bool
+	}{
+		{"bad key", "../escape", nil, "fix-up", false},
+		{"fix-up fails", "rootfs", errors.New("closure failed"), "closure failed", true},
+	} {
+		tenv(t)
+		ran := false
+		r := okRunner("example.com/img", tgt)
+		r.FixUp = func(fixup.Options) error { ran = true; return tc.fixErr }
+		recipe := okRecipe()
+		recipe.Build = map[string]any{"script": []any{"make install"}, "rootfs": tc.rootfs}
+		_, err := r.Build(recipe, "example.com/img", "*", tgt, tgt, "")
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.wantErr)
+		}
+		if ran != tc.ran {
+			t.Errorf("%s: fix-up ran = %v, want %v", tc.name, ran, tc.ran)
+		}
 	}
 }
 

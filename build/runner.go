@@ -649,10 +649,9 @@ func BuildDeps(recipe *pantry.Recipe) map[string]any { return buildDeps(recipe) 
 // recipe does not opt in. A key of the wrong type or shape is an error, not an
 // absence: silently skipping it would ship the unclosed rootfs it asked to avoid.
 func RootfsSubdir(recipe *pantry.Recipe) (string, error) {
-	m, ok := recipe.Build.(map[string]any)
-	if !ok {
-		return "", nil
-	}
+	// A Build that is not a map (the script shorthand) leaves m nil, and a nil
+	// map has no key: the lookup below answers "absent" for it.
+	m, _ := recipe.Build.(map[string]any)
 	v, present := m["rootfs"]
 	if !present {
 		return "", nil
