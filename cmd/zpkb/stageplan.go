@@ -359,6 +359,11 @@ func writeStagePlan(dir string, p *stagePlan) error {
 	if _, err := parseStagePlan(data); err != nil {
 		return fmt.Errorf("refusing to write a plan publish-stage would refuse: %w", err)
 	}
+	// A run that built nothing (all skipped, all failed) has not created the
+	// directory yet, and an empty plan is still the answer publish-stage reads.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(dir, stagePlanName+".tmp*")
 	if err != nil {
 		return err
