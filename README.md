@@ -1351,6 +1351,15 @@ is what the build says about itself, as it always was. A hostile recipe can stil
 lie inside its own artifact, and signing still vouches for the build, not for the
 recipe. What it can no longer do is take the key or the token.
 
+Under `--stage-only` the recipe's `test:` block runs against the staged build
+itself: its installed prefix plus its runtime and test dependencies, nothing
+asked of any registry for the package under test, nothing published. The verdict
+(`pass`, `fail`, `not-run`, `no-test`, or `skipped` under `--test=false`) is
+recorded per artifact in `publish-plan.json`. `publish-stage` refuses, per
+artifact and with exit status 1, a `fail`, a `not-run`, and a plan with no
+verdict or an unknown one; the other artifacts still publish. A recipe with no
+`test:` block, and a run with `--test=false`, publish as `factory` always did.
+
 ### The artifact carries its own justification
 
 ```

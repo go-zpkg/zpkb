@@ -157,6 +157,16 @@ type testRequest struct {
 	// already-published artifact and never ran a build, so it has no identity
 	// to pass and the store is asked instead.
 	BuildHash string
+	// Staged says the artifact under test was built by `factory --stage-only`
+	// and is published NOWHERE: the registry the environment resolves from does
+	// not hold it, so `zpkx +project@version` could only answer "no version of
+	// project satisfies" and the test would end NOT-RUN having tested nothing
+	// (smoke run 45076704819, lz4.org 1.11.1). The package under test is then
+	// taken from its installed prefix, which PackagePrefix already puts first on
+	// PATH, and the environment is assembled from what the artifact DEPENDS on:
+	// its runtime dependencies plus the test's own. Nothing is published to make
+	// that work.
+	Staged bool
 	// Run executes the generated script; nil uses the package default, which
 	// is the same pure-Go interpreter a build runs under.
 	Run func(scriptPath string, env []string) error
@@ -253,7 +263,7 @@ func runRecipeTest(req testRequest, stdout, stderr io.Writer) (testState, error)
 		shimDir = ""
 	}
 
-	script, err := renderTest(req.Recipe, req.Project, ver, tag, req.Target, paths, box, req.RecipeDir, req.ZpkxBin, shimDir)
+	script, err := renderTest(req.Recipe, req.Project, ver, tag, req.Target, paths, box, req.RecipeDir, req.ZpkxBin, shimDir, req.Staged)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return testNotRun, err
@@ -313,7 +323,7 @@ func runRecipeTest(req testRequest, stdout, stderr io.Writer) (testState, error)
 
 // renderTest turns the recipe's test node into the runnable script.
 func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
-	paths config.Paths, box, recipeDir, zpkxBin, shimDir string) (string, error) {
+	paths config.Paths, box, recipeDir, zpkxBin, shimDir string, staged bool) (string, error) {
 	// {{prefix}} is the INSTALLED prefix, not the build's staging directory.
 	// That is the whole difference between this and a build: the test reads
 	// the package where a consumer would find it, so a file the build made and
@@ -371,17 +381,28 @@ func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
 	if err != nil {
 		return "", fmt.Errorf("generate test script: %w", err)
 	}
+	pkgSpec := build.DepSpecs(map[string]any{project: "=" + ver}, tgt)[0]
+	deps := testDepSpecs(rec.Test, tgt)
+	if staged {
+		// ⛔ THE PACKAGE UNDER TEST IS NOT ASKED OF THE REGISTRY. It is not
+		// there: see testRequest.Staged. What the environment still needs is
+		// everything the artifact would have dragged in, so its runtime
+		// dependencies go first (the order the package itself had), then the
+		// test's own.
+		pkgSpec = ""
+		deps = append(build.DepSpecsAt(rec.Dependencies, tgt, ver), deps...)
+	}
 	return buildscript.WrapTest(buildscript.TestWrapOptions{
 		UserScript: user,
 		// `=ver` so depSpec renders `project@ver`: the exact bytes this run is
 		// about. A bare project name would let pkgx pick whatever version the
 		// registry likes, and a green line would then be about a different
 		// build from the one the operator named.
-		Package: build.DepSpecs(map[string]any{project: "=" + ver}, tgt)[0],
+		Package: pkgSpec,
 		// The build's own prefix, because the spec names a version and the
 		// store may hold several builds of it. See TestWrapOptions.PackagePrefix.
 		PackagePrefix: paths.Install,
-		Deps:          testDepSpecs(rec.Test, tgt),
+		Deps:          deps,
 		Compiler:      needsCompiler(user),
 		Home:          paths.Home,
 		Sandbox:       box,

@@ -82,6 +82,50 @@ type stageEntry struct {
 	// Sovereign is what the build measured about its own machine (see
 	// sovereignClaim). Like Bootstrap it is the untrusted side's statement.
 	Sovereign string `json:"sovereign,omitempty"`
+	// Test is what the artifact's own test: block came to when it was staged:
+	// "pass", "fail", "no-test", "not-run", or "skipped" (testing switched off).
+	// Empty is a plan written before the field existed, or by a build that never
+	// recorded one, and publish-stage refuses it like a failed test.
+	Test string `json:"test,omitempty"`
+}
+
+// stageTestSkipped is the verdict of a build that ran with --test=false. It is
+// not a testState because nothing ran and nothing was asked of the registry.
+const stageTestSkipped testState = "skipped"
+
+// stageTestRefusal says why publish-stage must not sign and push an entry, or
+// returns "" when it may.
+//
+// ⛔ THE POLICY, STATED. Published: "pass"; "no-test" (the recipe declares no
+// test: block, so there is nothing to have failed, and `factory` has always
+// published such a recipe and printed TEST NONE); "skipped" (the operator ran
+// the build with --test=false, which has always published). REFUSED: "fail",
+// "not-run" (the test's environment could not be assembled, so nobody learnt
+// anything — an unobtained answer is not a green one), and every other value
+// including the empty one. An artifact that was not tested must not be signed
+// by default, because a signature is a claim that someone looked.
+func stageTestRefusal(e stageEntry) string {
+	switch testState(e.Test) {
+	case testPassed, testNoBlock, stageTestSkipped:
+		return ""
+	case testFailed:
+		return "its own test FAILED"
+	case testNotRun:
+		return "its own test did NOT RUN, so nothing was verified"
+	case "":
+		return "the plan records no test verdict"
+	}
+	return fmt.Sprintf("the plan records an unknown test verdict %q", e.Test)
+}
+
+// setTest records the verdict of the artifact addBuilt staged at this address.
+func (p *stagePlan) setTest(project, version, osn, arch, glibc string, c artifact.Concrete, verdict string) {
+	k := stageEntry{Project: project, Tag: buildTag(project, version, glibc, c), OS: osn, Arch: arch}
+	for i := range p.Artifacts {
+		if stageKey(p.Artifacts[i]) == stageKey(k) {
+			p.Artifacts[i].Test = verdict
+		}
+	}
 }
 
 type stagePlan struct {
@@ -583,6 +627,15 @@ func runPublishStage(args []string, stdout, stderr io.Writer) int {
 		b, err := readStaged(root, e) // again: what is pushed is what is checked
 		if err != nil {
 			fmt.Fprintf(stderr, "publish-stage: %s %s: %v\n", e.Project, e.Tag, err)
+			failed++
+			continue
+		}
+		// ⛔ BEFORE ANYTHING IS SIGNED: a staged artifact whose test failed or
+		// never ran is not pushed (smoke run 45076704819 signed and pushed one
+		// whose test was NOT-RUN). The others still publish, and the exit status
+		// says one did not.
+		if why := stageTestRefusal(e); why != "" {
+			fmt.Fprintf(stderr, "publish-stage: %s %s: refused, %s\n", e.Project, e.Tag, why)
 			failed++
 			continue
 		}

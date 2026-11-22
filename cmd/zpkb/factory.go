@@ -955,7 +955,17 @@ func (f *factory) buildOne(rec *pantry.Recipe, proj, ver string) {
 		fmt.Fprintf(f.stdout, "✅ BUILT %s %s %s — not published (%s): %s\n",
 			proj, buildTag(proj, res.Version, f.glibc, res.Concrete), f.platform, flag, res.ArtifactPath)
 		f.ok++
-		f.testPublished(rec, proj, res.Version, res.SpecHash)
+		state := f.runPublishedTest(rec, proj, res.Version, res.SpecHash, f.stage != nil)
+		if f.stage != nil {
+			// ⛔ THE VERDICT TRAVELS WITH THE ARTIFACT, because the process that
+			// signs and pushes is not this one and a log line is not an input.
+			// Testing switched off is its own word, not an absent one: an absent
+			// verdict is refused by publish-stage.
+			if state == "" {
+				state = stageTestSkipped
+			}
+			f.stage.setTest(proj, publishVersion, f.osn, f.arch, f.glibc, res.Concrete, string(state))
+		}
 		f.dropBuildTree(proj, res.Version, res.SpecHash)
 		return
 	}
@@ -1733,18 +1743,27 @@ var factoryTestRunner = runBashLimited
 // version are exactly the case a lookup cannot decide. It is empty only on the
 // --test-only path, which built nothing and so has to ask the store.
 func (f *factory) testPublished(rec *pantry.Recipe, proj, ver, hash string) {
+	f.runPublishedTest(rec, proj, ver, hash, false)
+}
+
+// runPublishedTest is testPublished that also says what it came to. staged is
+// true under --stage-only, where nothing is published yet: see testRequest.Staged.
+// The empty state means testing is switched off, which is not a verdict.
+func (f *factory) runPublishedTest(rec *pantry.Recipe, proj, ver, hash string, staged bool) testState {
 	if !f.runTests {
-		return
+		return ""
 	}
 	fmt.Fprintf(f.stdout, "::group::test %s %s (%s)\n", proj, ver, f.platform)
 	tw := &tailWriter{w: f.stdout, max: failTailLines}
 	state, err := runRecipeTest(testRequest{
 		Recipe: rec, RecipeDir: f.runner.RecipeDir, Project: proj,
 		Version: ver, BuildHash: hash, Target: f.tgt, ZpkxBin: f.runner.ZpkxBin,
-		Run: factoryTestRunner(f.testTimeout, tw, tw),
+		Staged: staged,
+		Run:    factoryTestRunner(f.testTimeout, tw, tw),
 	}, tw, tw)
 	fmt.Fprintln(f.stdout, "::endgroup::")
 	f.recordTest(state, proj, ver, err)
+	return state
 }
 
 // recordTest writes one outcome down, in all four states.
