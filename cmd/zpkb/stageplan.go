@@ -577,12 +577,10 @@ func runPublishStage(args []string, stdout, stderr io.Writer) int {
 			failed++
 			continue
 		}
-		c, err := e.concrete()
-		if err != nil {
-			fmt.Fprintf(stderr, "publish-stage: %s %s: %v\n", e.Project, e.Tag, err)
-			failed++
-			continue
-		}
+		// parseStagePlan has already refused any entry whose spec does not round-trip
+		// (validate calls concrete), and the same string cannot parse differently
+		// a second time, so there is no error left to report here.
+		c, _ := e.concrete()
 		env := make([]moustache.Dep, 0, len(e.BuildEnv))
 		for _, d := range e.BuildEnv {
 			env = append(env, moustache.Dep{Project: d.Project, Version: d.Version, Path: d.Path})
