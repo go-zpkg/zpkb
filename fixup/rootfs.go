@@ -140,18 +140,18 @@ func (c *rootfsCloser) rewriteRunpaths() error {
 	}
 	sort.Strings(paths)
 	for _, p := range paths {
-		f, err := elf.Open(p)
-		if err != nil {
-			continue // reported by examine
-		}
 		var old string
-		for _, tag := range []elf.DynTag{elf.DT_RUNPATH, elf.DT_RPATH} {
-			if v, _ := f.DynString(tag); len(v) > 0 {
-				old = v[0]
-				break
+		// examine already parsed every path in c.seen; a file that no longer
+		// parses has no RUNPATH to rewrite.
+		if f, err := elf.Open(p); err == nil {
+			for _, tag := range []elf.DynTag{elf.DT_RUNPATH, elf.DT_RPATH} {
+				if v, _ := f.DynString(tag); len(v) > 0 {
+					old = v[0]
+					break
+				}
 			}
+			f.Close()
 		}
-		f.Close()
 		if old == "" {
 			continue
 		}
@@ -322,10 +322,8 @@ func (c *rootfsCloser) logf(f string, a ...any) {
 func (c *rootfsCloser) fail(f string, a ...any) { c.fails = append(c.fails, fmt.Sprintf(f, a...)) }
 
 func (c *rootfsCloser) rel(p string) string {
-	if r, err := filepath.Rel(c.root, p); err == nil {
-		return r
-	}
-	return p
+	r, _ := filepath.Rel(c.root, p) // p is under root (absolute both), so Rel cannot fail
+	return r
 }
 
 // CloseRootfs runs the closure over <prefix>/<sub>, searching depPaths.

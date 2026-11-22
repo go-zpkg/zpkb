@@ -19,6 +19,7 @@ type synth struct {
 	dlopen  string // JSON of one .note.dlopen note; "" for none
 
 	// Header lies, to reach what an honest file never does.
+	leadingLoad  bool   // a PT_LOAD program header before PT_INTERP
 	interpFilesz uint64 // PT_INTERP p_filesz, when not the string's length
 	noteType     uint32 // the .note.dlopen section type, when not SHT_NOTE
 	noteSize     uint64 // the .note.dlopen section size, when not the note's length
@@ -71,6 +72,9 @@ func (s synth) bytes() []byte {
 	if s.interp != "" {
 		phnum = 1
 		interp = append([]byte(s.interp), 0)
+		if s.leadingLoad {
+			phnum = 2
+		}
 	}
 	off := uint64(64 + 56*phnum)
 	interpOff := off
@@ -117,7 +121,13 @@ func (s synth) bytes() []byte {
 	} {
 		_ = binary.Write(&out, le, v)
 	}
-	if phnum == 1 {
+	if phnum == 2 {
+		// PT_LOAD, PF_R, covering nothing.
+		for _, v := range []any{uint32(1), uint32(4), uint64(0), uint64(0), uint64(0), uint64(0), uint64(0), uint64(1)} {
+			_ = binary.Write(&out, le, v)
+		}
+	}
+	if phnum >= 1 {
 		fsz := uint64(len(interp))
 		if s.interpFilesz != 0 {
 			fsz = s.interpFilesz
