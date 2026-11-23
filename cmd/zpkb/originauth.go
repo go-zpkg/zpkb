@@ -231,10 +231,7 @@ var sourceVerified = func(dist, project, tag, osn, arch string) (string, [][]byt
 		digest, payloads, refs, e = readVerifiedVia(c, project, tag, osn, arch)
 		return e
 	})
-	if err != nil {
-		return "", nil, nil, err
-	}
-	return digest, payloads, refs, nil
+	return digest, payloads, refs, err
 }
 
 // tagSource is what resolving a version to a registry tag asks of a registry.
