@@ -113,6 +113,12 @@ func TestNoSourceKeyTouchesNothing(t *testing.T) {
 		if os.Getenv(artifact.ExtraTrustedKeysEnv) != "x" {
 			t.Error("changed with no key")
 		}
+		// No key, no scope: the read must not queue behind another's.
+		if !sourceTrustMu.TryLock() {
+			t.Error("a read with no key took the lock")
+		} else {
+			sourceTrustMu.Unlock()
+		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
