@@ -167,6 +167,10 @@ type testRequest struct {
 	// its runtime dependencies plus the test's own. Nothing is published to make
 	// that work.
 	Staged bool
+	// Dist is the registry the environment resolves from, when it is not the
+	// process's $ZPKG_DIST: the destination a factory run just published to.
+	// Empty inherits the environment (go-zpkg/zpkb#532).
+	Dist string
 	// Run executes the generated script; nil uses the package default, which
 	// is the same pure-Go interpreter a build runs under.
 	Run func(scriptPath string, env []string) error
@@ -288,7 +292,7 @@ func runRecipeTest(req testRequest, stdout, stderr io.Writer) (testState, error)
 	// which is what the GitHub API they call needs. No `build:` block in the
 	// pantry references it, so SanitizedEnv stopped passing it and this is
 	// where the measured need actually is.
-	env := build.SanitizedEnv(paths.Home, config.ZpkgDir())
+	env := withDist(build.SanitizedEnv(paths.Home, config.ZpkgDir()), req.Dist)
 	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
 		env = append(env, "GITHUB_TOKEN="+tok)
 	}
@@ -319,6 +323,21 @@ func runRecipeTest(req testRequest, stdout, stderr io.Writer) (testState, error)
 	}
 	fmt.Fprintf(stdout, "PASS %s %s\n", req.Project, ver)
 	return testPassed, nil
+}
+
+// withDist makes dist the ZPKG_DIST of env, replacing any inherited one. An
+// empty dist leaves env alone.
+func withDist(env []string, dist string) []string {
+	if dist == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "ZPKG_DIST=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "ZPKG_DIST="+dist)
 }
 
 // renderTest turns the recipe's test node into the runnable script.

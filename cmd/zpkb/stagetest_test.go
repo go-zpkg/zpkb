@@ -46,14 +46,14 @@ func TestStagedTestDoesNotAskTheRegistryForThePackageUnderTest(t *testing.T) {
 				t.Fatalf("state %q:\n%s", got, out.String())
 			}
 			asksForPackage := strings.Contains(script, `"+proj.org@`)
-			if asksForPackage == tc.staged {
+			if asksForPackage {
 				t.Errorf("staged=%v but the environment asks the registry for the package under test = %v:\n%s",
 					tc.staged, asksForPackage, script)
 			}
 			// The package's own spec pulls its runtime closure in when it is asked
 			// of the registry; without it they have to be named, or the staged
 			// package would be tested with its libraries missing.
-			if hasDep := strings.Contains(script, `"+dep.org`); hasDep != tc.staged {
+			if hasDep := strings.Contains(script, `"+dep.org`); !hasDep {
 				t.Errorf("runtime dependency named in the environment = %v, want %v (staged=%v):\n%s", hasDep, tc.staged, tc.staged, script)
 			}
 			// Staged or not, the package under test is the only version of its
@@ -66,6 +66,60 @@ func TestStagedTestDoesNotAskTheRegistryForThePackageUnderTest(t *testing.T) {
 				t.Errorf("the package's prefix is not on PATH (staged=%v):\n%s", tc.staged, script)
 			}
 		})
+	}
+}
+
+// ⛔ go-zpkg/zpkb#532: a version present at --to and absent from $ZPKG_DIST must
+// test as PASS. The post-publish test resolved its closure from the read
+// registry, so a seed generation was tested against ghcr and ended NOT-RUN. The
+// published path now reads from the destination; a staged run, which pushed
+// nothing, keeps the inherited registry.
+func TestPublishedTestResolvesFromTheDestinationNotTheReadRegistry(t *testing.T) {
+	const (
+		readDist = "oci://read.example/packages"
+		toDist   = "oci://seed.example/seed-a0"
+	)
+	for _, tc := range []struct {
+		name   string
+		staged bool
+		want   string
+	}{{"published", false, toDist}, {"staged", true, readDist}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ZPKG_DIST", readDist)
+			var out bytes.Buffer
+			rec, dir := parseRecipe(t, "versions:\n  - 1.2.3\ndependencies:\n  dep.org: ^2\nbuild: make\ntest: true\n")
+			f := testFactory(t, &out, dir)
+			f.dist = toDist
+			var got string
+			prev := factoryTestRunner
+			factoryTestRunner = func(time.Duration, io.Writer, io.Writer) func(string, []string) error {
+				return func(_ string, env []string) error {
+					for _, kv := range env {
+						if v, ok := strings.CutPrefix(kv, "ZPKG_DIST="); ok {
+							got += v + ";"
+						}
+					}
+					return nil
+				}
+			}
+			t.Cleanup(func() { factoryTestRunner = prev })
+			if st := f.runPublishedTest(rec, "proj.org", "1.2.3", "", tc.staged); st != testPassed {
+				t.Fatalf("state %q:\n%s", st, out.String())
+			}
+			if got != tc.want+";" {
+				t.Errorf("test environment ZPKG_DIST = %q, want exactly %q (staged=%v)", got, tc.want, tc.staged)
+			}
+		})
+	}
+}
+
+func TestWithDistReplacesAnInheritedRegistry(t *testing.T) {
+	in := []string{"A=1", "ZPKG_DIST=old", "B=2"}
+	if got := strings.Join(withDist(in, "new"), " "); got != "A=1 B=2 ZPKG_DIST=new" {
+		t.Errorf("got %q", got)
+	}
+	if got := strings.Join(withDist(in, ""), " "); got != "A=1 ZPKG_DIST=old B=2" {
+		t.Errorf("empty dist changed the environment: %q", got)
 	}
 }
 
