@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/go-zpkg/artifact"
@@ -218,6 +219,73 @@ func checkProvenance(raw []byte, wantSubject string, c originClaims) (provOrigin
 // the trust threshold is met), and the referrers.
 var sourceVerified = func(dist, project, tag, osn, arch string) (string, [][]byte, []artifact.Referrer, error) {
 	c, err := artifact.NewOCIClient(dist)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return readVerifiedVia(c, project, tag, osn, arch)
+}
+
+// tagSource is what resolving a version to a registry tag asks of a registry.
+type tagSource interface {
+	ListTags(project string) ([]string, error)
+	HasPlatform(project, ver, osn, arch string) (bool, error)
+}
+
+// resolveBuildTag turns a version into the tag a registry holds it under.
+//
+// ⛔ A VERSION IS NOT A TAG. `zpkb publish-stage` lands a build under
+// `<version>-h<hash>` (buildTag); the bare version was the address before a build
+// had an identity, and asking for it answers "not found" about a registry that
+// holds the artifact. The rule is the installer's (artifact's PickVersionFor):
+//
+//   - a tag that already carries a build hash is used as given;
+//   - the builds of the version that carry THIS platform are listed: exactly one
+//     is used; several are REFUSED, naming each, because "the newest" of two
+//     builds is whichever the registry listed last and a promotion would sign a
+//     different artifact tomorrow;
+//   - with no hashed build, the bare tag is tried (artifacts published before
+//     builds had identities), and only then is the version declared absent.
+func resolveBuildTag(c tagSource, project, tag, osn, arch string) (string, error) {
+	if _, h := artifact.SplitVariantHash(tag); h != "" {
+		return tag, nil
+	}
+	all, err := c.ListTags(project)
+	if err != nil {
+		return "", err
+	}
+	var builds []string
+	for _, t := range all {
+		if v, h := artifact.SplitVariantHash(t); h == "" || v != tag {
+			continue
+		}
+		ok, err := c.HasPlatform(project, t, osn, arch)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			builds = append(builds, t)
+		}
+	}
+	switch len(builds) {
+	case 1:
+		return builds[0], nil
+	case 0:
+		return tag, nil // the bare tag; its absence is reported by the read that follows
+	}
+	sort.Strings(builds)
+	return "", fmt.Errorf("%s %s has %d builds for %s/%s (%s): refusing to pick one — name the build's tag",
+		project, tag, len(builds), osn, arch, strings.Join(builds, ", "))
+}
+
+// sourceClient is an OCI registry as the promotion reads it.
+type sourceClient interface {
+	originReader
+	tagSource
+}
+
+// readVerifiedVia resolves the version to the tag the registry holds, then reads.
+func readVerifiedVia(c sourceClient, project, ver, osn, arch string) (string, [][]byte, []artifact.Referrer, error) {
+	tag, err := resolveBuildTag(c, project, ver, osn, arch)
 	if err != nil {
 		return "", nil, nil, err
 	}

@@ -175,6 +175,8 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	maxVersions := fs.Int("max-versions", envInt("MAX_VERSIONS"), "cap versions built per requested project, newest first (0 = all)")
 	versionSpec := fs.String("versions", envOr("VERSIONS", ""), `only consider versions of the REQUESTED projects that match this pkgx constraint. A BARE version is a RANGE, not an exact match: "2.28.0" means >=2.28.0 within major 2, so an exact version needs "=2.28.0". Also "^3", ">=2.4". Applied before --max-versions. A closure-only dependency is NOT governed by this: it resolves to the newest version every one of its dependents can use`)
 	mirrorFrom := fs.String("mirror-from", "", "instead of building, copy each artifact from this upstream pkgx dist (e.g. https://dist.pkgx.dev) and republish it signed + attested — for versions we cannot or need not rebuild, such as ancient glibc")
+	strict := fs.Bool("strict", envBool("STRICT"),
+		"exit 1 when any requested (project, version) failed. Without it a failure is recorded and the run still exits 0, which suits a nightly chunk that fills the pantry progressively and is wrong for a run that NAMES what it wants. --require-origin implies it")
 	noPublish := fs.Bool("no-publish", envBool("NO_PUBLISH"),
 		"BUILD and stage each artifact under --artifacts, and push nothing. Not a dry run: the compile, the staging, the packing and the package's own test all happen — only the one irreversible step is skipped. This is what lets a recipe be built TWICE and the two artifacts compared (`zpkb reproduce`) without publishing a second copy of something already published")
 	stageOnly := fs.Bool("stage-only", envBool("STAGE_ONLY"),
@@ -423,7 +425,13 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	runner.Glibc = *glibc
 	runner.Bootstrap = *bootstrap
 	sovereignState, why := sovereignClaim(*libc, *bootstrap, sovereignRoot)
-	if sovereignState == "1" {
+	if *mirrorFrom != "" {
+		// A mirror compiles nothing, so what THIS machine measured about itself
+		// says nothing about the artifacts. Their verdict is the SOURCE's, read
+		// from its signed claim and carried (mirrorOne, srcOrigin); with
+		// --require-origin an artifact that is not sovereign there is refused.
+		fmt.Fprintln(stdout, "sovereign: carried from each source artifact's signed claim — a mirror compiles nothing, this machine's own verdict does not apply")
+	} else if sovereignState == "1" {
 		fmt.Fprintln(stdout, "sovereign: yes — recorded in the signed claim")
 	} else {
 		fmt.Fprintf(stdout, "sovereign: no (%s) — these artifacts cannot be promoted\n", why)
@@ -570,7 +578,15 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	if f.failures.Len() > 0 {
 		fmt.Fprint(stdout, "failures:\n", f.failures.String())
 	}
-	// Per-recipe failures never fail the run: the pantry fills progressively.
+	// ⛔ A FAILURE FAILS THE RUN WHEN ASKED TO. A promotion (--require-origin) is
+	// all-or-nothing by nature: an artifact refused there is the answer, and exit 0
+	// on "0 built, 1 failed" read as green all the way up (go-zpkg/packages run
+	// 45140545009). --strict asks for the same on any run that names what it wants.
+	if f.failed > 0 && (*strict || *requireOrigin) {
+		fmt.Fprintf(stderr, "factory: %d failed, exiting 1 (--strict or --require-origin)\n", f.failed)
+		return 1
+	}
+	// Otherwise per-recipe failures never fail the run: the pantry fills progressively.
 	return 0
 }
 
