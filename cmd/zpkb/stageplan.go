@@ -87,7 +87,30 @@ type stageEntry struct {
 	// Empty is a plan written before the field existed, or by a build that never
 	// recorded one, and publish-stage refuses it like a failed test.
 	Test string `json:"test,omitempty"`
+	// Mirror is present exactly for an artifact `factory --mirror-from
+	// --require-origin --stage-only` copied from a seed registry: the record that
+	// its signature and signed origin claim were verified when it was staged.
+	Mirror *stageMirror `json:"mirror,omitempty"`
 }
+
+// stageMirror is what a staging mirror run proved about the copy it made.
+type stageMirror struct {
+	// From is the seed registry the artifact was copied from.
+	From string `json:"from"`
+	// Digest is the artifact digest the signed origin claim was authenticated
+	// for; it must be the sha256 of the staged file.
+	Digest string `json:"digest"`
+	// OriginDist is the registry the SOURCE build resolved its inputs from,
+	// carried into the republished attestation rather than restated as ours.
+	OriginDist string `json:"origin_dist"`
+	// Verified says the source signature and the signed origin claim passed.
+	Verified bool `json:"verified"`
+}
+
+// stageTestMirrored is the verdict of a mirrored artifact. No test ran: the
+// artifact was built by somebody else and is promoted on the strength of
+// verified signatures and a verified origin claim.
+const stageTestMirrored testState = "mirrored-verified"
 
 // stageTestSkipped is the verdict of a build that ran with --test=false. It is
 // not a testState because nothing ran and nothing was asked of the registry.
@@ -105,6 +128,25 @@ const stageTestSkipped testState = "skipped"
 // including the empty one. An artifact that was not tested must not be signed
 // by default, because a signature is a claim that someone looked.
 func stageTestRefusal(e stageEntry) string {
+	// ⛔ A MIRROR RECORD AND THE VERDICT ARE ONE FACT, STATED TWICE. A record on an
+	// entry that claims another verdict, or the verdict with no record, is a plan
+	// that does not agree with itself, and is refused rather than read generously.
+	if (e.Mirror != nil) != (testState(e.Test) == stageTestMirrored) {
+		return "the plan's mirror record and its test verdict disagree"
+	}
+	if e.Mirror != nil {
+		switch m := e.Mirror; {
+		case !m.Verified:
+			return "the plan does not record that the mirrored artifact's signature and origin were verified"
+		case !strings.HasPrefix(m.From, "oci://"):
+			return "the plan's mirror source is not an oci:// registry, which has signatures to verify"
+		case m.Digest != "sha256:"+e.SHA256:
+			return "the plan's verified digest is not the staged file's"
+		case e.Bootstrap != "0" || e.Sovereign != "1":
+			return "the plan records a mirrored artifact that is not a verified sovereign one"
+		}
+		return ""
+	}
 	switch testState(e.Test) {
 	case testPassed, testNoBlock, stageTestSkipped:
 		return ""
@@ -291,6 +333,13 @@ func (e stageEntry) validate(plan *stagePlan) error {
 			}
 		}
 	}
+	if m := e.Mirror; m != nil {
+		for _, f := range [...]struct{ n, v string }{{"from", m.From}, {"digest", m.Digest}, {"origin_dist", m.OriginDist}} {
+			if err := cleanStageString(label+" mirror "+f.n, f.v, maxStageString); err != nil {
+				return err
+			}
+		}
+	}
 	switch e.Bootstrap {
 	case "", "0", "1":
 	default:
@@ -470,14 +519,27 @@ func hashFile(path string) (string, int64, error) {
 // addBuilt records one staged artifact, replacing an earlier entry for the same
 // address (a re-run of the same build).
 func (p *stagePlan) addBuilt(dir string, o publishOptions) error {
-	rel, err := filepath.Rel(dir, o.Path)
+	e, err := p.entryFor(dir, o)
 	if err != nil {
 		return err
+	}
+	if err := e.validate(p); err != nil {
+		return err
+	}
+	p.put(e)
+	return nil
+}
+
+// entryFor describes the staged file o.Path as a plan entry, unvalidated.
+func (p *stagePlan) entryFor(dir string, o publishOptions) (stageEntry, error) {
+	rel, err := filepath.Rel(dir, o.Path)
+	if err != nil {
+		return stageEntry{}, err
 	}
 	rel = filepath.ToSlash(rel)
 	sum, size, err := hashFile(o.Path)
 	if err != nil {
-		return err
+		return stageEntry{}, err
 	}
 	e := stageEntry{
 		Project: o.Project, Version: o.Version,
@@ -495,17 +557,34 @@ func (p *stagePlan) addBuilt(dir string, o publishOptions) error {
 	for _, d := range o.BuildEnv {
 		e.BuildEnv = append(e.BuildEnv, stageDep{Project: d.Project, Version: d.Version, Path: d.Path})
 	}
+	return e, nil
+}
+
+// addMirrored records one artifact `factory --mirror-from --require-origin`
+// verified and staged, with the record publish-stage needs to accept it.
+func (p *stagePlan) addMirrored(dir string, o publishOptions, m stageMirror) error {
+	e, err := p.entryFor(dir, o)
+	if err != nil {
+		return err
+	}
+	e.Test = string(stageTestMirrored)
+	e.Mirror = &m
 	if err := e.validate(p); err != nil {
 		return err
 	}
+	p.put(e)
+	return nil
+}
+
+// put records e, replacing an earlier entry for the same address.
+func (p *stagePlan) put(e stageEntry) {
 	for i := range p.Artifacts {
 		if stageKey(p.Artifacts[i]) == stageKey(e) {
 			p.Artifacts[i] = e
-			return nil
+			return
 		}
 	}
 	p.Artifacts = append(p.Artifacts, e)
-	return nil
 }
 
 // readStaged reads one staged artifact through root, so a path or a symlink in
@@ -643,6 +722,12 @@ func runPublishStage(args []string, stdout, stderr io.Writer) int {
 		// (validate calls concrete), and the same string cannot parse differently
 		// a second time, so there is no error left to report here.
 		c, _ := e.concrete()
+		origin := provOrigin{Bootstrap: e.Bootstrap, Sovereign: e.Sovereign, Dist: *to}
+		if e.Mirror != nil {
+			// Carried, not restated: the source build's own inputs registry.
+			origin.Dist = e.Mirror.OriginDist
+			origin.Digest = e.Mirror.Digest
+		}
 		env := make([]moustache.Dep, 0, len(e.BuildEnv))
 		for _, d := range e.BuildEnv {
 			env = append(env, moustache.Dep{Project: d.Project, Version: d.Version, Path: d.Path})
@@ -653,7 +738,7 @@ func runPublishStage(args []string, stdout, stderr io.Writer) int {
 			Glibc: e.Glibc, Key: kp, Time: when,
 			Source: e.Source.ref(), BuildEnv: env,
 			Advisories: *advisories,
-			Origin:     provOrigin{Bootstrap: e.Bootstrap, Sovereign: e.Sovereign, Dist: *to},
+			Origin:     origin,
 			Concrete:   c,
 		})
 		if err != nil {

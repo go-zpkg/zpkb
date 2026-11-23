@@ -178,7 +178,7 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	noPublish := fs.Bool("no-publish", envBool("NO_PUBLISH"),
 		"BUILD and stage each artifact under --artifacts, and push nothing. Not a dry run: the compile, the staging, the packing and the package's own test all happen — only the one irreversible step is skipped. This is what lets a recipe be built TWICE and the two artifacts compared (`zpkb reproduce`) without publishing a second copy of something already published")
 	stageOnly := fs.Bool("stage-only", envBool("STAGE_ONLY"),
-		"BUILD, stage each artifact under --artifacts and write everything a publish needs to "+stagePlanName+" beside them, then push nothing and sign nothing. `zpkb publish-stage` reads that plan and does the pushing, so the step that RUNS recipe code never holds the signing key or the registry credentials. Refused with --sign, with $SIGNING_KEY set, and with --mirror-from (a mirror runs no recipe)")
+		"BUILD, stage each artifact under --artifacts and write everything a publish needs to "+stagePlanName+" beside them, then push nothing and sign nothing. `zpkb publish-stage` reads that plan and does the pushing, so the step that RUNS recipe code never holds the signing key or the registry credentials. Refused with --sign and with $SIGNING_KEY set. With --mirror-from it needs --require-origin: the seed's signature and signed origin claim are verified here and the plan records the verdict `mirrored-verified`, which publish-stage accepts only with that record")
 	rebuild := fs.Bool("rebuild", envBool("REBUILD"), "publish a build of an ALREADY-PUBLISHED version as the next `_N` rebuild instead of replacing its tag — Homebrew's `rebuild`, Debian's `+bN`. For a recipe fix that changes the binary without changing the upstream version: fftw gained SIMD codelets and went out as the same 3.3.11, so nothing could tell the two apart. NOT folded into --force, which every manual darwin dispatch already sets: a counter minted on every forced run would bump N each time a lane was retried. ⛔ upstream pkgx/libpkgx cannot parse `_N` at all, so a project carrying one is unreadable to an upstream client")
 	requireOrigin := fs.Bool("require-origin", false, "with --mirror-from, PROMOTE instead of mirror: refuse any artifact whose source provenance does not prove the host toolchain was unused, and carry that verdict forward instead of restating it as ours. This is how a sovereign seed reaches the production registry — generations 0 and 1 publish only to a throwaway registry, and `bk origin` is the only thing that can tell one of their artifacts from a host-built one")
 	libc := fs.String("libc", "", `C library to link against: "zpkx" targets the gnu.org/glibc artifact instead of the build container's`)
@@ -239,9 +239,13 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	// A run that accepted one anyway would look the same and protect nothing.
 	if *stageOnly {
 		switch {
-		case *mirrorFrom != "":
-			fmt.Fprintln(stderr, "factory: --stage-only with --mirror-from has nothing to stage: a mirror runs no recipe, "+
-				"so it publishes directly.")
+		case *mirrorFrom != "" && !*requireOrigin:
+			// ⛔ A STAGED MIRROR CARRIES A VERDICT THE SIGNER TRUSTS, and the only
+			// one it can trust is that the source's signature AND its signed
+			// origin claim were checked on this run. A plain mirror of an
+			// unsigned dist proves neither, so there is nothing to record.
+			fmt.Fprintln(stderr, "factory: --stage-only with --mirror-from needs --require-origin: a staged mirror is signed later by "+
+				"`zpkb publish-stage`, which accepts it only on the record that the source's signature and signed origin claim were verified here.")
 			return 2
 		case *signKey != "":
 			fmt.Fprintln(stderr, "factory: --stage-only refuses --sign: the signing key is read only by `zpkb publish-stage`.")
@@ -1218,7 +1222,8 @@ func (f *factory) mirrorOne(proj, ver string) {
 		}
 	}
 	// Stage it in the same pkgx dist layout a build writes, so the Pages mirror
-	// picks a mirrored artifact up exactly like a built one.
+	// picks a mirrored artifact up exactly like a built one. (Below, the signing
+	// half is deferred to `zpkb publish-stage` under --stage-only.)
 	dir := filepath.Join(f.artifacts, filepath.FromSlash(proj), f.osn, f.arch)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		f.fail(proj, ver, "fetch", err)
@@ -1248,6 +1253,25 @@ func (f *factory) mirrorOne(proj, ver string) {
 				fmt.Fprintf(f.stderr, "      %v\n", pr)
 			}
 		}
+	}
+	// ⛔ UNDER --stage-only NOTHING IS SIGNED OR PUSHED HERE. By this line the
+	// source's signature was verified by the download, the signed origin claim
+	// was authenticated for one digest, and the bytes on disk are those of that
+	// digest (the three checks above), so the plan can say so — in a verdict that
+	// is not `pass`, because no test ran.
+	if f.stage != nil {
+		if err := f.stage.addMirrored(f.artifacts, publishOptions{
+			Project: proj, Version: ver, OS: f.osn, Arch: f.arch,
+			Path: path, Glibc: f.glibc,
+			Origin: provOrigin{Bootstrap: srcOrigin.Bootstrap, Sovereign: srcOrigin.Sovereign, Dist: f.dist},
+		}, stageMirror{From: f.mirror, Digest: srcOrigin.Digest, OriginDist: srcOrigin.Dist, Verified: true}); err != nil {
+			f.fail(proj, ver, "stage", err)
+			return
+		}
+		fmt.Fprintf(f.stdout, "✅ MIRRORED %s %s %s (%d KiB) — verified, not published (--stage-only): %s\n",
+			proj, tag, f.platform, len(data)/1024, path)
+		f.ok++
+		return
 	}
 	// A MIRRORED artifact gets the document too. We did not build it, but we
 	// are the one republishing it signed — and "what is known about this
