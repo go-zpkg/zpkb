@@ -1793,12 +1793,22 @@ func (f *factory) runPublishedTest(rec *pantry.Recipe, proj, ver, hash string, s
 	if !f.runTests {
 		return ""
 	}
+	dist := f.dist
+	if staged {
+		dist = ""
+	}
 	fmt.Fprintf(f.stdout, "::group::test %s %s (%s)\n", proj, ver, f.platform)
 	tw := &tailWriter{w: f.stdout, max: failTailLines}
 	state, err := runRecipeTest(testRequest{
 		Recipe: rec, RecipeDir: f.runner.RecipeDir, Project: proj,
 		Version: ver, BuildHash: hash, Target: f.tgt, ZpkxBin: f.runner.ZpkxBin,
-		Staged: staged,
+		// ⛔ THE PACKAGE UNDER TEST COMES FROM ITS PREFIX, published or not: asking
+		// a registry for it tests whatever that registry holds under the name
+		// (go-zpkg/zpkb#532). And what was just published is read back from where
+		// it was pushed, not from $ZPKG_DIST, which may be another registry
+		// altogether. A staged run pushed nothing, so it has no such place.
+		Staged: true,
+		Dist:   dist,
 		Run:    factoryTestRunner(f.testTimeout, tw, tw),
 	}, tw, tw)
 	fmt.Fprintln(f.stdout, "::endgroup::")
