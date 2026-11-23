@@ -183,6 +183,8 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		"BUILD, stage each artifact under --artifacts and write everything a publish needs to "+stagePlanName+" beside them, then push nothing and sign nothing. `zpkb publish-stage` reads that plan and does the pushing, so the step that RUNS recipe code never holds the signing key or the registry credentials. Refused with --sign and with $SIGNING_KEY set. With --mirror-from it needs --require-origin: the seed's signature and signed origin claim are verified here and the plan records the verdict `mirrored-verified`, which publish-stage accepts only with that record")
 	rebuild := fs.Bool("rebuild", envBool("REBUILD"), "publish a build of an ALREADY-PUBLISHED version as the next `_N` rebuild instead of replacing its tag — Homebrew's `rebuild`, Debian's `+bN`. For a recipe fix that changes the binary without changing the upstream version: fftw gained SIMD codelets and went out as the same 3.3.11, so nothing could tell the two apart. NOT folded into --force, which every manual darwin dispatch already sets: a counter minted on every forced run would bump N each time a lane was retried. ⛔ upstream pkgx/libpkgx cannot parse `_N` at all, so a project carrying one is unreadable to an upstream client")
 	requireOrigin := fs.Bool("require-origin", false, "with --mirror-from, PROMOTE instead of mirror: refuse any artifact whose source provenance does not prove the host toolchain was unused, and carry that verdict forward instead of restating it as ours. This is how a sovereign seed reaches the production registry — generations 0 and 1 publish only to a throwaway registry, and `bk origin` is the only thing that can tell one of their artifacts from a host-built one")
+	sourceTrustFlag := fs.String("source-trust", envOr("SOURCE_TRUSTED_KEYS", ""),
+		"with --mirror-from --require-origin: keys (name:RW<base64>, whitespace-separated, at most 8) believed ONLY when verifying the SOURCE artifacts and their signed origin claims. A seed registry is signed with a key clients must not trust, so a promotion could not otherwise read it. It is not exported to any child process, not recorded in the stage plan, and does not change what the destination's clients or the post-publish test trust")
 	libc := fs.String("libc", "", `C library to link against: "zpkx" targets the gnu.org/glibc artifact instead of the build container's`)
 	glibc := fs.String("glibc", "", "build and publish the whole closure against this exact glibc, e.g. 2.27.0 (implies --libc=zpkx)")
 	bootstrap := fs.Bool("bootstrap", false, "FIRST FILL ONLY on an architecture no registry has: build without the base toolchain in the environment, taking those tools from the host. The base toolchain is a cycle with no entry point (see build.BootstrapToolDeps), so without this nothing can be built first. Artifacts made this way were driven by unpinned host tools: publish them to a throwaway registry, use them to stage the sovereign rootfs, and rebuild everything inside it")
@@ -222,6 +224,19 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 			"so it needs --mirror-from. On a BUILD the origin is recorded from this run's own inputs and there is nothing to check.")
 		return 2
 	}
+	// ⛔ A KEY FOR THE SOURCE GUARDS NOTHING WITHOUT A VERIFIED SOURCE READ, and a
+	// malformed one must not be discovered after a build has been paid for.
+	srcKeys, serr := parseSourceTrust(*sourceTrustFlag)
+	switch {
+	case serr != nil:
+		fmt.Fprintln(stderr, "factory:", serr)
+		return 2
+	case len(srcKeys) > 0 && (*mirrorFrom == "" || !*requireOrigin):
+		fmt.Fprintln(stderr, "factory: --source-trust is read only when a promotion verifies its source, so it needs --mirror-from and --require-origin.")
+		return 2
+	}
+	sourceTrust = srcKeys
+	defer func() { sourceTrust = nil }()
 	// ⛔ REFUSED RATHER THAN QUIETLY IGNORED, because both combinations would
 	// do something other than what was asked and look like they worked.
 	//

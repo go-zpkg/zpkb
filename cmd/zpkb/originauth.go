@@ -222,7 +222,16 @@ var sourceVerified = func(dist, project, tag, osn, arch string) (string, [][]byt
 	if err != nil {
 		return "", nil, nil, err
 	}
-	return readVerifiedVia(c, project, tag, osn, arch)
+	var (
+		digest   string
+		payloads [][]byte
+		refs     []artifact.Referrer
+	)
+	err = underSourceTrust(sourceTrust, func() (e error) {
+		digest, payloads, refs, e = readVerifiedVia(c, project, tag, osn, arch)
+		return e
+	})
+	return digest, payloads, refs, err
 }
 
 // tagSource is what resolving a version to a registry tag asks of a registry.
