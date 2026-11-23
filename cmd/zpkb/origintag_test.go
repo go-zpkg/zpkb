@@ -54,6 +54,32 @@ func TestAMirrorReadsTheBuildTagNotTheBareVersion(t *testing.T) {
 	}
 }
 
+// A listing or platform probe that fails is an error, never "no builds": an
+// answer that was not obtained must not read as a negative one.
+func TestAFailedTagReadIsAnErrorEverywhereItCanHappen(t *testing.T) {
+	// A build tag given as is never asks the registry to list anything.
+	if got, err := resolveBuildTag(&fakeSource{lerr: errors.New("boom")}, "p", buildA, "linux", "x86-64"); err != nil || got != buildA {
+		t.Errorf("a given build tag consulted the registry: %q, %v", got, err)
+	}
+	// The probe failing is an error.
+	src := &platErrSource{fakeSource: fakeSource{tags: []string{buildA}}}
+	if _, err := resolveBuildTag(src, "p", "1.11.1", "linux", "x86-64"); err == nil || !strings.Contains(err.Error(), "probe down") {
+		t.Errorf("a failed platform probe was swallowed: %v", err)
+	}
+	// And the error reaches the read's caller.
+	failing := &fakeSource{lerr: errors.New("boom")}
+	_, _, _, err := readVerifiedVia(failing, "p", "1.11.1", "linux", "x86-64")
+	if err == nil || !strings.Contains(err.Error(), "boom") || len(failing.read) != 0 {
+		t.Errorf("readVerifiedVia read on after a failed resolution: %v, reads %v", err, failing.read)
+	}
+}
+
+type platErrSource struct{ fakeSource }
+
+func (platErrSource) HasPlatform(string, string, string, string) (bool, error) {
+	return false, errors.New("probe down")
+}
+
 func TestResolveBuildTagRule(t *testing.T) {
 	for _, c := range []struct {
 		name string
