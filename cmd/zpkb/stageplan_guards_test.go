@@ -424,6 +424,9 @@ func TestRefusalsNameTheirOwnReason(t *testing.T) {
 	if err := p.addBuilt(dir, publishOptions{Project: "a.org", Version: "1.0", OS: "linux", Arch: "x86-64", Path: filepath.Join(dir, "gone.tar.gz")}); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("recording a missing file: %v", err)
 	}
+	if err := p.addMirrored(dir, publishOptions{Project: "a.org", Version: "1.0", OS: "linux", Arch: "x86-64", Path: filepath.Join(dir, "gone.tar.gz")}, stageMirror{}); !errors.Is(err, fs.ErrNotExist) || len(p.Artifacts) != 0 {
+		t.Errorf("recording a missing mirrored file: %v, %d entries", err, len(p.Artifacts))
+	}
 	blocker := filepath.Join(dir, "f")
 	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
 		t.Fatal(err)
