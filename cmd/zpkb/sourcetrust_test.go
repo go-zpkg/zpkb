@@ -219,3 +219,31 @@ func TestTheDefaultSourceReadAppliesTheKeys(t *testing.T) {
 		t.Error("the key was left in the environment")
 	}
 }
+
+// ⛔ promo-r4: the origin read believed --source-trust, then the download, which
+// verifies the signature too, did not: "signed by no trusted key". The download
+// must run with the source keys in the trust environment, and only for its own
+// duration.
+func TestPromotionDownloadsUnderTheSourceKeys(t *testing.T) {
+	entry, _, _ := seedKey(t)
+	r := newMirrorStageRig(t)
+	r.serve(t, r.tarball, r.tarball, sovereignSource, nil)
+	var env string
+	old := factoryDownload
+	t.Cleanup(func() { factoryDownload = old })
+	factoryDownload = func(_, _, _, _ string) ([]byte, string, error) {
+		env = artifact.Env(artifact.ExtraTrustedKeysEnv)
+		return r.tarball, ".tar.gz", nil
+	}
+	code := r.h.run(t, "--stage-only", "--recipes", "lib.org", "--to", stageDist,
+		"--mirror-from", mirrorSeed, "--require-origin", "--source-trust", entry)
+	if code != 0 {
+		t.Fatalf("code=%d\n%s", code, r.h.errb.String())
+	}
+	if !strings.Contains(env, entry) {
+		t.Errorf("the download verified under %q, without the source key", env)
+	}
+	if got := artifact.Env(artifact.ExtraTrustedKeysEnv); strings.Contains(got, entry) {
+		t.Errorf("the source key outlived the download: %q", got)
+	}
+}
