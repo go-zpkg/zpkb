@@ -1247,7 +1247,16 @@ func (f *factory) mirrorOne(proj, ver string) {
 		}
 		dlVer = t
 	}
-	data, ext, err := factoryDownload(proj, dlVer, f.osn, f.arch)
+	// The download verifies the signature too, under the trust set read from
+	// the environment, so it believes --source-trust exactly as the origin
+	// read did (promo-r4: authenticated, then "signed by no trusted key").
+	// Without --require-origin sourceTrust is empty and this is a no-op.
+	var data []byte
+	var ext string
+	err := underSourceTrust(sourceTrust, func() (e error) {
+		data, ext, e = factoryDownload(proj, dlVer, f.osn, f.arch)
+		return e
+	})
 	if err != nil {
 		f.fail(proj, ver, "fetch", err)
 		return
