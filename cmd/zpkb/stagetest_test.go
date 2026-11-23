@@ -56,6 +56,11 @@ func TestStagedTestDoesNotAskTheRegistryForThePackageUnderTest(t *testing.T) {
 			if hasDep := strings.Contains(script, `"+dep.org`); hasDep != tc.staged {
 				t.Errorf("runtime dependency named in the environment = %v, want %v (staged=%v):\n%s", hasDep, tc.staged, tc.staged, script)
 			}
+			// Staged or not, the package under test is the only version of its
+			// project on the search paths (smoke run 45085969313: two lz4.org).
+			if !strings.Contains(script, "__zpkb_only_version 'proj.org' ") {
+				t.Errorf("the environment is not narrowed to the version under test (staged=%v):\n%s", tc.staged, script)
+			}
 			// Either way the build's own bin is put on PATH: that is what runs.
 			if !strings.Contains(script, "/bin:") {
 				t.Errorf("the package's prefix is not on PATH (staged=%v):\n%s", tc.staged, script)
