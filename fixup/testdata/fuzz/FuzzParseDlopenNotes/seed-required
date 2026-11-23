@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("\x04\x00\x00\x00H\x00\x00\x00\n\f|@FDO\x00[{\"feature\":\"tpm\",\"priority\":\"required\",\"soname\":[\"libtss2-esys.so.0\",\"libtss2-esys.so.1\"]}]\x00\x00\x00\x00")

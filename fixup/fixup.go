@@ -26,6 +26,13 @@ type Options struct {
 	// DepPaths are the install prefixes of the build's dependency closure,
 	// used to compute $ORIGIN-relative RUNPATHs (linux only).
 	DepPaths []string
+	// Rootfs, when set, is the recipe's `build.rootfs`: a subdirectory of Prefix
+	// holding a root filesystem to make self-contained (see CloseRootfs).
+	// RootfsDeps are the dependency prefixes its libraries are searched in. They
+	// are NOT DepPaths: that field drives RUNPATHs, and reusing it would change
+	// every build's RUNPATH to add a rootfs.
+	Rootfs     string
+	RootfsDeps []string
 	// Log, if set, receives human-readable progress lines.
 	Log func(string)
 }
@@ -92,6 +99,18 @@ func FixUp(opts Options) error {
 		}
 	} else {
 		opts.log("skipping header flattening for %s", opts.Prefix)
+	}
+	if opts.Rootfs != "" {
+		// ELF closure: a Mach-O rootfs would be a different feature, and
+		// silently doing nothing would ship the very thing this refuses.
+		if opts.Platform != "linux" {
+			return fmt.Errorf("build.rootfs is ELF-only; platform is %s", opts.Platform)
+		}
+		rep, err := CloseRootfs(opts.Prefix, opts.Rootfs, opts.RootfsDeps, opts.Log)
+		if err != nil {
+			return err
+		}
+		opts.log("rootfs closure: %d ELF examined, %d library names copied, %d dlopen miss(es)", rep.ELFs, len(rep.Copied), len(rep.Misses))
 	}
 	return auditBuilt(opts)
 }

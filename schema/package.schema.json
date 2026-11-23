@@ -49,6 +49,7 @@
             "env": { "$ref": "#/$defs/envMap" },
             "working-directory": { "type": "string" },
             "prefix": { "type": "string" },
+            "rootfs": { "type": "string", "description": "a subdirectory of the install prefix holding a root filesystem; every ELF in it gets its DT_NEEDED and .note.dlopen libraries copied in (a missing DT_NEEDED or a required dlopen entry fails the build)" },
             "skip": { "$ref": "#/$defs/stringOrArray", "description": "fix-up steps to skip: fix-machos, fix-patchelf, libtool-cleanup, flatten-includes" }
           }
         }

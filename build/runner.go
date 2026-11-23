@@ -603,7 +603,17 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 			return res, fmt.Errorf("stage install: drop the replaced prefix: %w", err)
 		}
 	}
-	if err := r.FixUp(fixup.Options{Prefix: paths.Install, BuildInstall: paths.BuildInstall, Platform: tgt.Platform, ZpkgDir: config.ZpkgDir()}); err != nil {
+	rootfs, err := RootfsSubdir(recipe)
+	if err != nil {
+		return res, fmt.Errorf("fix-up: %w", err)
+	}
+	var rootfsDeps []string
+	if rootfs != "" {
+		for _, d := range p.BuildEnv {
+			rootfsDeps = append(rootfsDeps, d.Path)
+		}
+	}
+	if err := r.FixUp(fixup.Options{Prefix: paths.Install, BuildInstall: paths.BuildInstall, Platform: tgt.Platform, ZpkgDir: config.ZpkgDir(), Rootfs: rootfs, RootfsDeps: rootfsDeps}); err != nil {
 		return res, fmt.Errorf("fix-up: %w", err)
 	}
 
@@ -633,6 +643,28 @@ func (r *Runner) concurrency() int {
 // recipe's build deps are as capable of naming an unpublishable version as its
 // runtime ones — `bk depgaps` counts both.
 func BuildDeps(recipe *pantry.Recipe) map[string]any { return buildDeps(recipe) }
+
+// RootfsSubdir is the recipe's `build.rootfs`: the subdirectory of the install
+// prefix that holds a root filesystem to be made self-contained, or "" when the
+// recipe does not opt in. A key of the wrong type or shape is an error, not an
+// absence: silently skipping it would ship the unclosed rootfs it asked to avoid.
+func RootfsSubdir(recipe *pantry.Recipe) (string, error) {
+	// A Build that is not a map (the script shorthand) leaves m nil, and a nil
+	// map has no key: the lookup below answers "absent" for it.
+	m, _ := recipe.Build.(map[string]any)
+	v, present := m["rootfs"]
+	if !present {
+		return "", nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("build.rootfs must be a string, got %T", v)
+	}
+	if err := fixup.ValidRootfsSubdir(s); err != nil {
+		return "", err
+	}
+	return s, nil
+}
 
 func buildDeps(recipe *pantry.Recipe) map[string]any {
 	if m, ok := recipe.Build.(map[string]any); ok {
