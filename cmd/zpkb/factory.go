@@ -1237,7 +1237,17 @@ func (f *factory) mirrorOne(proj, ver string) {
 		// make.
 		srcOrigin = o
 	}
-	data, ext, err := factoryDownload(proj, ver, f.osn, f.arch)
+	// The tag the origin was read under is the tag to download (see sourceTag).
+	dlVer := ver
+	if f.requireOrigin {
+		t, terr := sourceTag(f.mirror, proj, tag, f.osn, f.arch)
+		if terr != nil {
+			f.fail(proj, ver, "fetch", terr)
+			return
+		}
+		dlVer = t
+	}
+	data, ext, err := factoryDownload(proj, dlVer, f.osn, f.arch)
 	if err != nil {
 		f.fail(proj, ver, "fetch", err)
 		return
