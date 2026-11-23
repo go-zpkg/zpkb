@@ -402,6 +402,7 @@ func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
 		// The build's own prefix, because the spec names a version and the
 		// store may hold several builds of it. See TestWrapOptions.PackagePrefix.
 		PackagePrefix: paths.Install,
+		Project:       project,
 		Deps:          deps,
 		Compiler:      needsCompiler(user),
 		Home:          paths.Home,

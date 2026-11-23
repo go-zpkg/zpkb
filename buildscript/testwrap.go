@@ -50,6 +50,10 @@ type TestWrapOptions struct {
 	// sbin and lib directories go on PATH and LD_LIBRARY_PATH AFTER the eval,
 	// ahead of whatever it chose. Empty means the eval alone decides.
 	PackagePrefix string
+	// Project is the project name of the package under test (`lz4.org`). With
+	// PackagePrefix it makes the package the ONLY version of its project on the
+	// environment's search paths: see onlyVersionScript. Empty skips that.
+	Project string
 	// Deps are the recipe's test.dependencies, already reduced for the target
 	// and rendered as pkgspecs. They are a SEPARATE map from build and runtime
 	// dependencies: a test may need a fixture generator or a diff tool that
@@ -183,6 +187,9 @@ func WrapTest(o TestWrapOptions) string {
 	if p := o.PackagePrefix; p != "" {
 		fmt.Fprintf(&b, "export PATH=%q\"${PATH:+:$PATH}\"\n", p+"/bin:"+p+"/sbin")
 		fmt.Fprintf(&b, "export LD_LIBRARY_PATH=%q\"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\"\n", p+"/lib:"+p+"/lib64")
+		if o.Project != "" {
+			b.WriteString(onlyVersionScript(o.Project, p))
+		}
 	}
 
 	// After the eval, so the artifacts are on disk and $ZPKG_DIR is set; before
