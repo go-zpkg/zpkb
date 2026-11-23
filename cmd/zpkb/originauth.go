@@ -234,6 +234,22 @@ var sourceVerified = func(dist, project, tag, osn, arch string) (string, [][]byt
 	return digest, payloads, refs, err
 }
 
+// sourceTag is the seam that names the tag a promotion's source holds a version
+// under, for the DOWNLOAD that follows the authenticated read.
+//
+// ⛔ THE READ AND THE DOWNLOAD MUST ASK FOR THE SAME TAG. The origin read goes
+// through resolveBuildTag (`1.11.1` -> `1.11.1-h<hash>`), and the download used to
+// pass the bare version to the registry, which answers "not found" about an
+// artifact it holds: a promotion from a seed written by publish-stage verified
+// the origin and then failed to fetch (go-zpkg/packages promo-r3, lz4.org 1.11.1).
+var sourceTag = func(dist, project, ver, osn, arch string) (string, error) {
+	c, err := artifact.NewOCIClient(dist)
+	if err != nil {
+		return "", err
+	}
+	return resolveBuildTag(c, project, ver, osn, arch)
+}
+
 // tagSource is what resolving a version to a registry tag asks of a registry.
 type tagSource interface {
 	ListTags(project string) ([]string, error)
