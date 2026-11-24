@@ -55,7 +55,14 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *dist != "" {
-		artifact.DistBase = strings.TrimRight(*dist, "/")
+		// --dist, like $ZPKG_DIST, is an ordered list of sources.
+		if srcs := artifact.SplitDistList(*dist); len(srcs) > 0 {
+			artifact.DistBase, artifact.DistExtra = srcs[0], srcs[1:]
+		}
+	}
+	if err := artifact.ValidateDist(); err != nil {
+		fmt.Fprintln(stderr, "builder:", err)
+		return 2
 	}
 	if *overlay != "" {
 		artifact.PantryOverlay = strings.TrimRight(*overlay, "/")
@@ -81,7 +88,7 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 		MicroVM:   *microvm,
 		Container: *container,
 		Overlay:   artifact.PantryOverlay,
-		Dist:      artifact.DistBase,
+		Dist:      strings.Join(append([]string{artifact.DistBase}, artifact.DistExtra...), " "),
 		Log:       func(s string) { fmt.Fprintln(stdout, s) },
 	}); err != nil {
 		fmt.Fprintln(stderr, "builder:", err)
