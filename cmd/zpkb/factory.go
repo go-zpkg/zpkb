@@ -1377,6 +1377,14 @@ func setUpstreamDist(from string, requireOrigin bool) error {
 		if err := promotionPreconditions(from); err != nil {
 			return err
 		}
+		// ⛔ ONLY A PROMOTION MAY READ A go-pkgx SOURCE. artifact refuses go-pkgx
+		// as any dist source (we no longer publish there); the promotion of what
+		// was already published there to go-zpkg is the one exception, and only
+		// because every artifact is authenticated against its own signature and
+		// signed origin claim (promotionPreconditions above refuses a run with
+		// verification off). A plain mirror keeps the refusal.
+		artifact.SetPromotionSource(from)
+		return nil
 	}
 	artifact.DistBase = from
 	if strings.HasPrefix(from, "oci://") {
