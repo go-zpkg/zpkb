@@ -509,6 +509,51 @@ func TestRunBuilderStages(t *testing.T) {
 	}
 }
 
+// --dist is an ordered list, like $ZPKG_DIST: every source is applied and the
+// whole list is what the staged rootfs is told to read from.
+func TestRunBuilderTakesAnOrderedDistList(t *testing.T) {
+	fakeStage(t)
+	oldB, oldX := artifact.DistBase, artifact.DistExtra
+	t.Cleanup(func() { artifact.DistBase, artifact.DistExtra = oldB, oldX })
+	root := filepath.Join(t.TempDir(), "rootfs")
+	tc := filepath.Join(t.TempDir(), "toolchain.txt")
+	if err := os.WriteFile(tc, []byte("gnu.org/glibc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	code := runBuilder([]string{
+		"--out", root, "--platform", "linux/x86-64", "--toolchain", tc, "--microvm",
+		"--dist", "oci://example.invalid/run/pkgs, oci://example.invalid/go-zpkg/packages",
+	}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if artifact.DistBase != "oci://example.invalid/run/pkgs" ||
+		len(artifact.DistExtra) != 1 || artifact.DistExtra[0] != "oci://example.invalid/go-zpkg/packages" {
+		t.Errorf("list not applied: %q %q", artifact.DistBase, artifact.DistExtra)
+	}
+	b, err := os.ReadFile(filepath.Join(root, ".weft-microvm", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "ZPKG_DIST=oci://example.invalid/run/pkgs oci://example.invalid/go-zpkg/packages") {
+		t.Errorf("the guest is not told the whole list:\n%s", b)
+	}
+}
+
+func TestRunBuilderRefusesGoPkgxInTheDistList(t *testing.T) {
+	fakeStage(t)
+	oldB, oldX := artifact.DistBase, artifact.DistExtra
+	t.Cleanup(func() { artifact.DistBase, artifact.DistExtra = oldB, oldX })
+	var out, errb bytes.Buffer
+	code := runBuilder([]string{
+		"--out", t.TempDir(), "--dist", "oci://example.invalid/go-zpkg/packages oci://ghcr.io/go-pkgx/packages",
+	}, &out, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "go-pkgx") {
+		t.Errorf("exit %d, stderr %q: want 2 and a go-pkgx refusal", code, errb.String())
+	}
+}
+
 func TestRunBuilderReportsStagingFailure(t *testing.T) {
 	fakeStage(t)
 	resolveClosureFor = func(map[string]string, string, string) ([]artifact.Resolved, error) {
