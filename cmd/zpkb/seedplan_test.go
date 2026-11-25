@@ -288,7 +288,7 @@ func TestTheFactoryRefusesToMixSeededAndUnseededArtifactsInOneStage(t *testing.T
 	t.Setenv("ZPKX_SEEDED", "")
 	r.stage(t)
 	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
-	code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries))
+	code := r.h.run(t, append([]string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist}, ledgerFlags(t, testSeedEntries)...)...)
 	if code != 1 || !strings.Contains(r.h.errb.String(), "one pass has one seed") {
 		t.Errorf("code=%d err=%q", code, r.h.errb.String())
 	}
@@ -297,14 +297,14 @@ func TestTheFactoryRefusesToMixSeededAndUnseededArtifactsInOneStage(t *testing.T
 func TestTheFactoryStagesTheSeedLedgerIntoThePlan(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
 	r := newStageRig(t)
-	empty := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, nil))
+	empty := r.h.run(t, append([]string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist}, ledgerFlags(t, nil)...)...)
 	if empty != 2 || !strings.Contains(r.h.errb.String(), "is empty") {
 		t.Fatalf("an empty ledger: code=%d err=%q", empty, r.h.errb.String())
 	}
 	if _, err := os.Stat(filepath.Join(r.h.artifacts, stagePlanName)); err == nil {
 		t.Error("a plan was written under a seed that named nothing")
 	}
-	code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries))
+	code := r.h.run(t, append([]string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist}, ledgerFlags(t, testSeedEntries)...)...)
 	if code != 0 || !strings.Contains(r.h.out.String(), "seed: 2 artifact(s)") {
 		t.Fatalf("code=%d out=%q err=%q", code, r.h.out.String(), r.h.errb.String())
 	}
@@ -323,15 +323,15 @@ func TestTheFactoryStagesTheSeedLedgerIntoThePlan(t *testing.T) {
 func TestTheFactoryRefusesToExtendAPlanUnderAShrunkenLedger(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
 	r := newStageRig(t)
-	args := []string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger"}
-	if code := r.h.run(t, append(args, writeLedger(t, testSeedEntries))...); code != 0 {
+	args := []string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist}
+	if code := r.h.run(t, append(args, ledgerFlags(t, testSeedEntries)...)...); code != 0 {
 		t.Fatalf("first run: code=%d err=%q", code, r.h.errb.String())
 	}
 	before, err := os.ReadFile(filepath.Join(r.h.artifacts, stagePlanName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := r.h.run(t, append(args, writeLedger(t, testSeedEntries[:1]))...)
+	code := r.h.run(t, append(args, ledgerFlags(t, testSeedEntries[:1])...)...)
 	if code != 1 || !strings.Contains(r.h.errb.String(), "no longer has") {
 		t.Fatalf("code=%d err=%q", code, r.h.errb.String())
 	}
@@ -355,6 +355,27 @@ func TestASeedLedgerThatDoesNotMatchTheRecordedDigestIsRefused(t *testing.T) {
 	other := writeLedger(t, testSeedEntries[:1])
 	if _, err := snapshotSeed(other, want); err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("a rewritten ledger was accepted: %v", err)
+	}
+}
+
+// ledgerFlags is the pair a seeded factory is given: the ledger and the digest
+// the outer script recorded for it.
+func ledgerFlags(t *testing.T, es []artifact.SeedEntry) []string {
+	t.Helper()
+	return []string{"--seed-ledger", writeLedger(t, es), "--seed-ledger-sha256", "sha256:" + artifact.SeedLedgerDigest(es)}
+}
+
+// Item 6: under a seed the digest is REQUIRED, not optional: a ledger the outer
+// script did not record a digest for has nothing to be checked against.
+func TestTheFactoryRequiresTheRecordedLedgerDigestUnderASeed(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
+	r := newStageRig(t)
+	code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries))
+	if code != 2 || !strings.Contains(r.h.errb.String(), "--seed-ledger-sha256 is required") {
+		t.Errorf("code=%d err=%q", code, r.h.errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(r.h.artifacts, stagePlanName)); err == nil {
+		t.Error("a plan was written for a ledger with no recorded digest")
 	}
 }
 
@@ -407,7 +428,7 @@ func TestBuilderRunsInsideAVerifiedSeed(t *testing.T) {
 func TestPublishStageCarriesTheSeedIntoTheProvenance(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
 	r := newStageRig(t)
-	if code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries)); code != 0 {
+	if code := r.h.run(t, append([]string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist}, ledgerFlags(t, testSeedEntries)...)...); code != 0 {
 		t.Fatalf("stage-only: code=%d err=%q", code, r.h.errb.String())
 	}
 	code, out, errb := r.publishStage("--to", stageDist, "--sign", r.key)
@@ -427,7 +448,7 @@ func TestPublishStageCarriesTheSeedIntoTheProvenance(t *testing.T) {
 func TestASeedBuildsProvenanceDoesNotClaimItsDestinationAsItsInputs(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
 	r := newStageRig(t)
-	if code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries)); code != 0 {
+	if code := r.h.run(t, append([]string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist}, ledgerFlags(t, testSeedEntries)...)...); code != 0 {
 		t.Fatalf("stage-only: code=%d err=%q", code, r.h.errb.String())
 	}
 	if code, out, errb := r.publishStage("--to", stageDist, "--sign", r.key); code != 0 {

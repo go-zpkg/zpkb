@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/go-zpkg/artifact"
+	"github.com/go-zpkg/zpkb/moustache"
 )
 
 // A SEED PASS builds with another registry's artifacts as the BUILD
@@ -90,6 +91,30 @@ func applySeedEntries(p *stagePlan, es []artifact.SeedEntry, out io.Writer) erro
 	seed := &stageSeed{Digest: artifact.SeedLedgerDigest(es), Entries: es}
 	p.Seed = seed
 	fmt.Fprintf(out, "seed: %d artifact(s) of the seed registry were the build environment (ledger sha256:%s) — named in the provenance, never promotable\n", len(seed.Entries), seed.Digest)
+	return nil
+}
+
+// refuseSeededPrefixes is the stage-time half of the seed marker: a build that
+// stages itself as UNSEEDED (seeded == false) while any prefix it was built
+// from carries the installer's marker is refused, naming the dependency. The
+// marker is written by the installer, so a build that never saw the seed flag
+// cannot have left the fact out. Under a seed, marked prefixes are expected.
+func refuseSeededPrefixes(env []moustache.Dep, seeded bool) error {
+	if seeded {
+		return nil
+	}
+	for _, d := range env {
+		if d.Path == "" {
+			continue
+		}
+		digest, marked, err := artifact.IsSeedPrefix(d.Path)
+		if err != nil {
+			return fmt.Errorf("%s %s: cannot tell whether its prefix came from a seed: %w", d.Project, d.Version, err)
+		}
+		if marked {
+			return fmt.Errorf("%s %s was installed from a seed (%s) and this build is staged unseeded: pass --seed-ledger or rebuild it", d.Project, d.Version, digest)
+		}
+	}
 	return nil
 }
 

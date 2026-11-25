@@ -221,6 +221,10 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	// what is signed; a digest recorded outside the build must match it.
 	var seedSnap []artifact.SeedEntry
 	if *seedLedger != "" {
+		if *seedLedgerSHA == "" {
+			fmt.Fprintln(stderr, "factory: --seed-ledger-sha256 is required with --seed-ledger: the digest the outer script recorded before any recipe ran is what the ledger is checked against")
+			return 2
+		}
 		var err error
 		if seedSnap, err = snapshotSeed(*seedLedger, strings.TrimPrefix(*seedLedgerSHA, "sha256:")); err != nil {
 			fmt.Fprintln(stderr, "factory:", err)
@@ -481,7 +485,8 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 
 	f := &factory{
 		runner: runner, tgt: tgt, host: target.Host(),
-		osn: osn, arch: arch, platform: *platform,
+		seeded: *seedLedger != "",
+		osn:    osn, arch: arch, platform: *platform,
 		dist: *to, artifacts: *artifacts, glibc: *glibc,
 		force: *force, key: kp, when: factoryTime(),
 		mirror:           strings.TrimRight(*mirrorFrom, "/"),
@@ -634,6 +639,7 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 // factory carries one run's configuration and tallies.
 type factory struct {
 	runner    *build.Runner
+	seeded    bool // --seed-ledger: this pass builds from a seed
 	tgt       target.Target
 	host      target.Target
 	osn       string
@@ -979,6 +985,12 @@ func (f *factory) buildOne(rec *pantry.Recipe, proj, ver string) {
 	// they are _1 — and a read failure refuses rather than guesses, because a
 	// guessed number is a collision.
 	publishVersion := res.Version
+	// ⛔ BEFORE ANYTHING IS STAGED OR PUSHED: a prefix the installer marked as
+	// seed-installed cannot feed a build that does not say so.
+	if err := refuseSeededPrefixes(res.BuildEnv, f.seeded); err != nil {
+		f.fail(proj, res.Version, "seed", err)
+		return
+	}
 	if f.rebuild {
 		n, rerr := nextRebuild(proj, res.Version, f.osn, f.arch)
 		if rerr != nil {
