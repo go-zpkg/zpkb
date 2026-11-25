@@ -92,9 +92,11 @@ func TestOriginSeededIsSilentOnYesAndRefusesOnNo(t *testing.T) {
 	if code := runOrigin(originArgs("--dist", "oci://x/y", "--seeded"), &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "no seed claim") {
 		t.Errorf("an unseeded artifact: %d %q", code, errOut.String())
 	}
-	// A registry that cannot be authenticated is a refusal too.
+	// A registry that cannot be authenticated is a refusal too, even when the
+	// artifact it serves would pass.
+	stubVerified(t, o, nil)
 	errOut.Reset()
-	if code := runOrigin(originArgs("--dist", "https://static.example/dist", "--seeded"), &out, &errOut); code != 1 {
+	if code := runOrigin(originArgs("--dist", "https://static.example/dist", "--seeded"), &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "oci://") {
 		t.Errorf("an unauthenticated registry: %d %q", code, errOut.String())
 	}
 	errOut.Reset()
