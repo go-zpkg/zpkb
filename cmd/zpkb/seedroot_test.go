@@ -23,7 +23,7 @@ func mkVersions(t *testing.T, root string, rels ...string) {
 func TestSeedTargetsListsEveryProjectVersion(t *testing.T) {
 	root := t.TempDir()
 	// Project names carry slashes; v8.dev looks like a version and is a project.
-	mkVersions(t, root, "gnu.org/make/v4.4.1", "go.dev/v1.23.0", "go.dev/v1.22.0", "v8.dev/v12.0")
+	mkVersions(t, root, "gnu.org/make/v4.4.1", "go.dev/v1.23.0", "go.dev/v1.22.0", "v8.dev/v12.0", "g.org/v8.dev/v12.0")
 	if err := os.MkdirAll(filepath.Join(root, "empty.org"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestSeedTargetsListsEveryProjectVersion(t *testing.T) {
 	for _, g := range got {
 		names = append(names, g.project+"@"+g.version)
 	}
-	want := "gnu.org/make@4.4.1 go.dev@1.22.0 go.dev@1.23.0 v8.dev@12.0"
+	want := "g.org/v8.dev@12.0 gnu.org/make@4.4.1 go.dev@1.22.0 go.dev@1.23.0 v8.dev@12.0"
 	if strings.Join(names, " ") != want {
 		t.Fatalf("got %v, want %s", names, want)
 	}
