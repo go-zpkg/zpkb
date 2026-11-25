@@ -67,9 +67,13 @@ type Runner struct {
 	// github.com/besser82/libxcrypt as a linux dependency of perl, and that is
 	// the project being built.
 	ToolInstallable func(project, constraint string) (string, error)
-	Concurrency     int
-	ZpkxBin         string
-	BashPath        string
+	// Provision, when set, installs a closure (specs are `name@constraint`) and
+	// returns the shell environment it composes. Set under a seed pass, where the
+	// generated script cannot ask zpkx itself: see BuildPlan.
+	Provision   func(specs []string) (string, error)
+	Concurrency int
+	ZpkxBin     string
+	BashPath    string
 	// RecipeDir is the pantry project directory holding the recipe (package.yml)
 	// and its sibling files. It is copied into the build tree as `props/` so
 	// recipes can reference those files as `props/foo` or via the {{props}}
@@ -95,6 +99,20 @@ type Runner struct {
 	// to have installed — /usr/bin/sed exists on every developer's laptop and
 	// on none of the scratch images.
 	LookPath func(string) (string, error)
+}
+
+// provision installs one closure through r.Provision and returns the
+// environment it composes. An empty spec list is an empty environment and asks
+// nothing of the provisioner.
+func (r *Runner) provision(specs []string, what string) (string, error) {
+	if len(specs) == 0 {
+		return "", nil
+	}
+	env, err := r.Provision(specs)
+	if err != nil {
+		return "", fmt.Errorf("zpkb: the %s environment failed: %s: %w", what, strings.Join(specs, " "), err)
+	}
+	return env, nil
 }
 
 // toolInstallable is the stronger question when the caller can answer it, and
@@ -529,7 +547,7 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 	if err != nil {
 		return res, err
 	}
-	script := buildscript.Wrap(buildscript.WrapOptions{
+	wo := buildscript.WrapOptions{
 		PrefixMap:  prefixMap,
 		UserScript: user, Deps: deps, ToolDeps: toolDeps, Target: tgt, Host: host,
 		Home: paths.Home, SrcRoot: paths.Build, ZpkgDir: config.ZpkgDir(), Install: paths.Install, Project: project,
@@ -537,7 +555,22 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 		LibcZpkx:  r.LibcMode == "zpkx",
 		Glibc:     r.Glibc,
 		Bootstrap: r.Bootstrap,
-	})
+	}
+	if r.Provision != nil {
+		// ⛔ A SEED PASS PROVISIONS THE ENVIRONMENT HERE, BEFORE THE SCRIPT EXISTS.
+		// The zpkx a script calls refuses every package request below a seed, so
+		// the factory installs both closures itself (from the seed, recorded in its
+		// ledger) and writes what they compose into the script. A failure is the
+		// build's failure, named for the closure that did not install.
+		if wo.ToolEnv, err = r.provision(wo.ToolSpecs(), "tool"); err != nil {
+			return res, err
+		}
+		if wo.DepEnv, err = r.provision(wo.DepSpecs(), "dependency"); err != nil {
+			return res, err
+		}
+		wo.Provisioned = true
+	}
+	script := buildscript.Wrap(wo)
 	res.ScriptPath = paths.Build + ".sh"
 	if err := osWriteFile(res.ScriptPath, []byte(script), 0o755); err != nil {
 		return res, err

@@ -68,8 +68,14 @@ func stubVerifiedBy(t *testing.T, fails map[string]error) *[]string {
 	t.Helper()
 	o := seededOrigin()
 	d, p, r := signedFixture(t, o)
-	old := sourceVerified
-	t.Cleanup(func() { sourceVerified = old })
+	old, oldBytes := sourceVerified, installedBytes
+	t.Cleanup(func() { sourceVerified, installedBytes = old, oldBytes })
+	installedBytes = func(_ string, _ seedTarget, _, _, digest string) error {
+		if digest != d {
+			return errors.New("bytes compared against the wrong digest")
+		}
+		return nil
+	}
 	var asked []string
 	sourceVerified = func(_, project, version, _, _ string) (string, [][]byte, []artifact.Referrer, error) {
 		asked = append(asked, project+"@"+version)

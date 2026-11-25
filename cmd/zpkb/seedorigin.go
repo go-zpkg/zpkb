@@ -89,9 +89,20 @@ func authenticatedSeed(digest string, payloads [][]byte, refs []artifact.Referre
 
 // verifiedSeed is the one reading of an artifact's seed that a gate may use.
 func verifiedSeed(dist, project, tag, osn, arch, want string) (string, error) {
+	ledger, _, err := verifiedSeedArtifact(dist, project, tag, osn, arch, want)
+	return ledger, err
+}
+
+// verifiedSeedArtifact is verifiedSeed that also returns the artifact digest the
+// signature vouches for, so a caller can compare BYTES against it.
+func verifiedSeedArtifact(dist, project, tag, osn, arch, want string) (ledger, digest string, err error) {
 	digest, payloads, refs, err := sourceVerified(dist, project, tag, osn, arch)
 	if err != nil {
-		return "", fmt.Errorf("cannot read or authenticate the source provenance from %s: %w", dist, err)
+		return "", "", fmt.Errorf("cannot read or authenticate the source provenance from %s: %w", dist, err)
 	}
-	return authenticatedSeed(digest, payloads, refs, want)
+	ledger, err = authenticatedSeed(digest, payloads, refs, want)
+	if err != nil {
+		return "", "", err
+	}
+	return ledger, digest, nil
 }

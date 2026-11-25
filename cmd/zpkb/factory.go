@@ -477,6 +477,18 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	//   /bin/sh: xmalloc: hashlib.c:72: cannot allocate 8192 bytes
 	// which reads like a broken recipe and is not one.
 	runner.Concurrency = *jobs
+	var provisioner *seedProvisioner
+	if *seedLedger != "" {
+		// Under a seed the script cannot ask zpkx for packages (zpkx refuses it),
+		// so the factory installs each closure from the seed itself, recorded.
+		var perr error
+		if provisioner, perr = newSeedProvisioner(zpkxBin, os.Getenv("ZPKX_SEEDED"), seedSnap); perr != nil {
+			fmt.Fprintln(stderr, "factory:", perr)
+			return 1
+		}
+		defer provisioner.Close()
+		runner.Provision = provisioner.Provision
+	}
 
 	if err := setCodec(*compress); err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -591,7 +603,7 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 
 	if f.stage != nil {
 		if *seedLedger != "" && len(f.stage.Artifacts) > 0 {
-			if err := applySeedEntries(f.stage, seedSnap, stdout); err != nil {
+			if err := applySeedEntries(f.stage, provisioner.Entries(), stdout); err != nil {
 				fmt.Fprintln(stderr, "factory:", err)
 				return 1
 			}

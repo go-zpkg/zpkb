@@ -77,7 +77,13 @@ func verifySeededRoot(dist, root, osn, arch, want string, stderr io.Writer) int 
 	}
 	var errs []error
 	for _, t := range ts {
-		if _, err := verifiedSeed(dist, t.project, t.version, osn, arch, want); err != nil {
+		_, digest, err := verifiedSeedArtifact(dist, t.project, t.version, osn, arch, want)
+		if err == nil {
+			// ⛔ The directory NAME is a claim the installer made; the signed
+			// digest is about a tarball. Compare the installed BYTES to it.
+			err = installedBytes(dist, t, osn, arch, digest)
+		}
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s %s (%s/%s): %v", t.project, t.version, osn, arch, err))
 		}
 	}
