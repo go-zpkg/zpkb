@@ -333,3 +333,41 @@ func TestApplySeedReportsTheLedgerItRecorded(t *testing.T) {
 		t.Errorf("a refused ledger printed %q (%v)", out.String(), err)
 	}
 }
+
+// A seed that verifies runs the builder inside it, and the builder's own exit
+// code comes back out unchanged.
+func TestBuilderRunsInsideAVerifiedSeed(t *testing.T) {
+	t.Setenv("ZPKG_VERIFY", "1") // other tests in the package switch it off
+	calls := fakeStage(t)
+	var out, errb bytes.Buffer
+	if rc := runBuilder([]string{"--seed-from", "oci://seed.test/x", "--dry-run", "--platform", "linux/s390x"}, &out, &errb); rc != 0 {
+		t.Fatalf("rc = %d, stderr: %s", rc, errb.String())
+	}
+	if calls.resolvedFor != "linux/s390x" {
+		t.Errorf("resolved for %q", calls.resolvedFor)
+	}
+	errb.Reset()
+	if rc := runBuilder([]string{"--seed-from", "oci://seed.test/x"}, &out, &errb); rc != 2 {
+		t.Errorf("no --out inside a seed: rc = %d, want the builder's own 2", rc)
+	}
+}
+
+// The seed named in the plan reaches the published provenance: it is carried,
+// not dropped between the build half and the publish half.
+func TestPublishStageCarriesTheSeedIntoTheProvenance(t *testing.T) {
+	t.Setenv("ZPKX_SEED_FROM", "oci://seed.test/x")
+	r := newStageRig(t)
+	if code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries)); code != 0 {
+		t.Fatalf("stage-only: code=%d err=%q", code, r.h.errb.String())
+	}
+	code, out, errb := r.publishStage("--to", stageDist, "--sign", r.key)
+	if code != 0 {
+		t.Fatalf("publish-stage: code=%d\n%s\n%s", code, out, errb)
+	}
+	if len(r.pushes) == 0 {
+		t.Fatal("nothing was pushed")
+	}
+	if !strings.Contains(strings.Join(r.pushes, "\n"), artifact.SeedLedgerDigest(testSeedEntries)) {
+		t.Error("the pushed provenance does not name the seed ledger digest")
+	}
+}
