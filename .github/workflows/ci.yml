@@ -117,6 +117,25 @@ jobs:
           ulimit -v 2097152
           GOMEMLIMIT=256MiB ./fetch.test -test.run 'Xz' -test.v
 
+  # The seed build with NO stand-in for either program: the real zpkx (the
+  # release the packages repository pins) installs a seeded toolchain from the
+  # seed registry and the real zpkb builds a recipe under it. Every other test
+  # of the seed path stubs one of the two, which cannot tell a factory whose
+  # recipes have no way to get their dependencies from one that does.
+  seed-e2e:
+    name: seed build, real zpkx + real zpkb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - name: install the real zpkx
+        run: GOBIN="$RUNNER_TEMP/zpkx-bin" go install github.com/go-zpkg/zpkx@v0.45.0
+      - name: seed build end to end
+        env:
+          ZPKB_E2E_ZPKX: ${{ runner.temp }}/zpkx-bin/zpkx
+        run: go test -count=1 -v -run '^TestSeedBuildEndToEndWithTheRealZpkxAndZpkb$' ./cmd/zpkb
+
   build:
     runs-on: ubuntu-latest
     strategy:
