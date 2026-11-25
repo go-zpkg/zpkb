@@ -42,11 +42,19 @@ func runOrigin(args []string, stdout, stderr io.Writer) int {
 	promotable := fs.Bool("promotable", false, "say nothing and exit 0 only if the provenance PROVES the host toolchain was not used; exit 1 otherwise, including when nothing is recorded")
 	seeded := fs.Bool("seeded", false, "say nothing and exit 0 only if a VERIFIED signed claim says the artifact was built from a seed; exit 1 otherwise")
 	seedLedger := fs.String("seed-ledger-sha256", "", "with --seeded: the ledger digest the claim must name")
+	root := fs.String("root", "", "with --seeded: check EVERY <project>/v<version> under this directory instead of one named artifact; one refusal fails the whole")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "usage: zpkb origin [--dist d] [--platform os/arch] [--promotable | --seeded [--seed-ledger-sha256 d]] <project> <version>")
+	const usage = "usage: zpkb origin [--dist d] [--platform os/arch] [--promotable | --seeded [--seed-ledger-sha256 d] [--root dir]] [<project> <version>]"
+	if *root != "" {
+		if !*seeded || fs.NArg() != 0 {
+			fmt.Fprintln(stderr, "origin: --root goes with --seeded and no project or version")
+			fmt.Fprintln(stderr, usage)
+			return 2
+		}
+	} else if fs.NArg() != 2 {
+		fmt.Fprintln(stderr, usage)
 		return 2
 	}
 	if *seeded && *promotable {
@@ -57,12 +65,14 @@ func runOrigin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "origin: --seed-ledger-sha256 needs --seeded")
 		return 2
 	}
-	project, version := fs.Arg(0), fs.Arg(1)
-
 	osn, arch, err := buildEnvPlatform(*platform)
 	if err != nil {
 		fmt.Fprintln(stderr, "origin:", err)
 		return 2
+	}
+	var project, version string
+	if *root == "" {
+		project, version = fs.Arg(0), fs.Arg(1)
 	}
 	// ⛔ THE GATE READS THE SIGNED FACTS, NOT THE REFERRER. -promotable answers
 	// from verifiedOrigin alone; the unauthenticated provenance below is only
@@ -71,6 +81,9 @@ func runOrigin(args []string, stdout, stderr io.Writer) int {
 		if err := promotionPreconditions(*dist); err != nil {
 			fmt.Fprintln(stderr, "origin:", err)
 			return 1
+		}
+		if *root != "" {
+			return verifySeededRoot(*dist, *root, osn, arch, *seedLedger, stderr)
 		}
 		if _, err := verifiedSeed(*dist, project, version, osn, arch, *seedLedger); err != nil {
 			fmt.Fprintf(stderr, "origin: %s %s (%s/%s): %v\n", project, version, osn, arch, err)
