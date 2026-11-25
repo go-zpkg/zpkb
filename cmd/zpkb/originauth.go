@@ -32,6 +32,10 @@ const (
 	optProvenance = "zpkb-provenance-sha256"
 	// optSovereign is "1" when the build ran inside the sovereign rootfs.
 	optSovereign = "zpkb-sovereign"
+	// optSeed is the sha256 (hex) of the seed ledger: the artifacts of ANOTHER
+	// registry that served as the build environment of this build. It is signed,
+	// so the fact cannot be dropped from an artifact after the build.
+	optSeed = "zpkb-seed"
 
 	// maxClaimBytes bounds a payload before it is parsed: the signed payload is
 	// a few hundred bytes, and what a registry serves is not trusted to say so.
@@ -43,6 +47,7 @@ type originClaims struct {
 	ManifestDigest string
 	Provenance     string
 	Sovereign      string
+	Seed           string
 }
 
 // originSigning builds the simple-signing payload that goes under the signature,
@@ -55,6 +60,9 @@ var originSigning = func(dockerRef, manifestDigest string, c originClaims) ([]by
 	}
 	if c.Sovereign != "" {
 		opt[optSovereign] = c.Sovereign
+	}
+	if c.Seed != "" {
+		opt[optSeed] = c.Seed
 	}
 	type identity struct {
 		DockerReference string `json:"docker-reference"`
@@ -102,7 +110,7 @@ func parseOriginClaims(payload []byte) (originClaims, error) {
 		return originClaims{}, fmt.Errorf("signed payload: %w", err)
 	}
 	c := originClaims{ManifestDigest: p.Critical.Image.Digest}
-	for k, dst := range map[string]*string{optProvenance: &c.Provenance, optSovereign: &c.Sovereign} {
+	for k, dst := range map[string]*string{optProvenance: &c.Provenance, optSovereign: &c.Sovereign, optSeed: &c.Seed} {
 		raw, ok := p.Optional[k]
 		if !ok {
 			continue
@@ -203,6 +211,9 @@ func checkProvenance(raw []byte, wantSubject string, c originClaims) (provOrigin
 	}
 	if !subject {
 		return provOrigin{}, errors.New("the provenance is about another artifact digest")
+	}
+	if c.Seed != "" {
+		return provOrigin{}, fmt.Errorf("the build used a seed (ledger sha256:%s) as its build environment: a seed-built artifact is never promoted — only a rebuild from our own outputs is", c.Seed)
 	}
 	if c.Sovereign != "1" {
 		return provOrigin{}, fmt.Errorf("the signed claim says sovereign=%q: the build did not state that it ran inside the sovereign rootfs", c.Sovereign)

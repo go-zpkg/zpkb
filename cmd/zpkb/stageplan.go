@@ -177,6 +177,48 @@ type stagePlan struct {
 	Builder   string       `json:"builder"`
 	Time      int64        `json:"time"`
 	Artifacts []stageEntry `json:"artifacts"`
+	// Seed is present exactly when the artifacts were built with another
+	// registry's artifacts as their build environment (a seed pass). It is a
+	// plan-level fact: one pass has one seed. publish-stage writes it into the
+	// provenance and the signed claim of every entry.
+	Seed *stageSeed `json:"seed,omitempty"`
+}
+
+// stageSeed is the seed ledger a plan was staged under.
+type stageSeed struct {
+	// Digest is SeedLedgerDigest(Entries), recomputed on read.
+	Digest  string               `json:"digest"`
+	Entries []artifact.SeedEntry `json:"entries"`
+}
+
+// maxSeedEntries bounds the ledger: a toolchain closure is hundreds of
+// artifacts, not millions.
+const maxSeedEntries = 20000
+
+// validate refuses a seed whose digest is not the ledger's, an empty ledger
+// (a claim of a seed that names nothing), and an unclean or oversized one.
+func (s *stageSeed) validate() error {
+	if len(s.Entries) == 0 {
+		return errors.New("plan: seed names no artifact")
+	}
+	if len(s.Entries) > maxSeedEntries {
+		return fmt.Errorf("plan: seed has %d entries, limit %d", len(s.Entries), maxSeedEntries)
+	}
+	for i, e := range s.Entries {
+		if e.Project == "" || e.Version == "" || e.Digest == "" {
+			return fmt.Errorf("plan: seed entry %d names no project, version and digest", i)
+		}
+		strs := append([]string{e.Project, e.Version, e.Digest, e.Source}, e.Signers...)
+		for _, v := range strs {
+			if err := cleanStageString(fmt.Sprintf("plan seed entry %d", i), v, maxStageString); err != nil {
+				return err
+			}
+		}
+	}
+	if want := artifact.SeedLedgerDigest(s.Entries); s.Digest != want {
+		return fmt.Errorf("plan: seed digest %q is not the ledger's (%s)", s.Digest, want)
+	}
+	return nil
 }
 
 var (
@@ -391,8 +433,16 @@ func parseStagePlan(data []byte) (*stagePlan, error) {
 	if len(p.Artifacts) > maxStageEntries {
 		return nil, fmt.Errorf("plan: %d artifacts, limit %d", len(p.Artifacts), maxStageEntries)
 	}
+	if p.Seed != nil {
+		if err := p.Seed.validate(); err != nil {
+			return nil, err
+		}
+	}
 	seen := make(map[string]bool, len(p.Artifacts))
 	for _, e := range p.Artifacts {
+		if p.Seed != nil && e.Mirror != nil {
+			return nil, fmt.Errorf("plan: %s %s is a mirrored copy in a seeded plan: a seed pass builds, it does not copy", e.Project, e.Tag)
+		}
 		if err := e.validate(&p); err != nil {
 			return nil, err
 		}
@@ -727,6 +777,11 @@ func runPublishStage(args []string, stdout, stderr io.Writer) int {
 			// Carried, not restated: the source build's own inputs registry.
 			origin.Dist = e.Mirror.OriginDist
 			origin.Digest = e.Mirror.Digest
+		}
+		if plan.Seed != nil {
+			// Named in the provenance and in the signed claim, never hidden.
+			origin.Seed = plan.Seed.Digest
+			origin.SeedEntries = plan.Seed.Entries
 		}
 		env := make([]moustache.Dep, 0, len(e.BuildEnv))
 		for _, d := range e.BuildEnv {

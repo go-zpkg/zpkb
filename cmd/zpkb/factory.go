@@ -203,12 +203,17 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	testTimeout := fs.Duration("test-timeout", 5*time.Minute, "give up on one package's test after this long")
 	testOnly := fs.Bool("test-only", envBool("TEST_ONLY"), "build NOTHING: run the recorded test for each project's already-published version. What the factory publishes it tests once, and never again — this is how an artifact that stopped working gets noticed")
 	sourceMirror := fs.String("source-mirror", envOr("SOURCE_MIRROR", ""), "keep every source archive a build downloads in this registry, addressed by its sha256 (e.g. oci://ghcr.io/go-zpkg). 57% of this pantry builds from tarballs GitHub GENERATES on request rather than stores, so for those it is the first stored artefact they have ever had")
+	seedLedger := fs.String("seed-ledger", "", "the ledger file `zpkx --seed-from` writes. Needs --stage-only and a seed in force ($ZPKX_SEED_FROM, which zpkx sets): the ledger is carried into the stage plan, and `zpkb publish-stage` names the seed in each artifact's provenance and signed claim. A seed in force without this flag is refused, so a seed-built artifact is never signed unmarked; such an artifact is never promoted")
 	sourcePinStrict := fs.Bool("source-pin-strict", false, "fail a fetch when the mirror cannot be ASKED what a URL served before, rather than warning and continuing. A mismatch always fails; this is only about an unreadable store, and the two are different facts -- treating them alike is how trust-on-first-use becomes trust-every-time")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *platform == "" {
 		fmt.Fprintln(stderr, "usage: zpkb factory --platform os/arch [--recipes \"p1 p2\"] [--pantry dir] [--to oci://…]")
+		return 2
+	}
+	if err := checkSeedFlags(*seedLedger, os.Getenv("ZPKX_SEED_FROM"), *stageOnly, *mirrorFrom); err != nil {
+		fmt.Fprintln(stderr, "factory:", err)
 		return 2
 	}
 	// ⛔ A GATE THAT GUARDS NOTHING IS WORSE THAN NO GATE, because the operator
@@ -502,6 +507,10 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "factory:", perr)
 			return 1
 		}
+		if err := checkPlanSeed(plan, *seedLedger != ""); err != nil {
+			fmt.Fprintln(stderr, "factory:", err)
+			return 1
+		}
 		f.stage = plan
 	}
 	if f.mirror != "" {
@@ -565,6 +574,13 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if f.stage != nil {
+		if *seedLedger != "" && len(f.stage.Artifacts) > 0 {
+			if err := applySeed(f.stage, *seedLedger); err != nil {
+				fmt.Fprintln(stderr, "factory:", err)
+				return 1
+			}
+			fmt.Fprintf(stdout, "seed: %d artifact(s) of the seed registry were the build environment (ledger sha256:%s) — named in the provenance, never promotable\n", len(f.stage.Seed.Entries), f.stage.Seed.Digest)
+		}
 		if err := writeStagePlan(*artifacts, f.stage); err != nil {
 			fmt.Fprintln(stderr, "factory:", err)
 			return 1

@@ -42,21 +42,52 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 	microvm := fs.Bool("microvm", false, "also write .weft-microvm/config.json so `weft microvm run` can boot the directory as-is")
 	container := fs.Bool("container", false, "also write /etc/ld.so.conf listing every staged library directory, so the tree runs as a CONTAINER root and not only under bk's build wrapper")
 	dryRun := fs.Bool("dry-run", false, "resolve the toolchain closure for --platform, print it, and stage nothing")
+	seedFrom := fs.String("seed-from", "", "install the toolchain from this registry as a SEED: its signatures are verified, each artifact is recorded in --seed-ledger, and it is a build environment only — never a dependency source, never published. The rootfs of a bootstrap pass")
+	seedLedger := fs.String("seed-ledger", "", "append each seed artifact installed to this ledger file (needs --seed-from)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *out == "" && !*dryRun {
+	if *seedLedger != "" && *seedFrom == "" {
+		fmt.Fprintln(stderr, "builder: --seed-ledger records a seed, and no --seed-from was given")
+		return 2
+	}
+	if *seedFrom == "" {
+		return runBuilderWith(*out, *platform, *toolchain, *bkBin, *zpkxBin, *dist, *overlay, *microvm, *container, *dryRun, stdout, stderr)
+	}
+	if *dist != "" {
+		// --dist would replace the seed as the registry the toolchain is read
+		// from: the run would look seeded and install from somewhere else.
+		fmt.Fprintln(stderr, "builder: --dist and --seed-from both name the registry the toolchain is installed from; give one")
+		return 2
+	}
+	artifact.SetSeedLedgerFile(*seedLedger)
+	defer artifact.SetSeedLedgerFile("")
+	code := 0
+	if err := artifact.WithSeedSource(*seedFrom, func() error {
+		code = runBuilderWith(*out, *platform, *toolchain, *bkBin, *zpkxBin, *dist, *overlay, *microvm, *container, *dryRun, stdout, stderr)
+		return nil
+	}); err != nil {
+		fmt.Fprintln(stderr, "builder: seed:", err)
+		return 1
+	}
+	return code
+}
+
+// runBuilderWith is runBuilder after its flags are read, so a seed pass can run
+// it inside artifact.WithSeedSource.
+func runBuilderWith(out, platform, toolchain, bkBin, zpkxBin, dist, overlay string, microvm, container, dryRun bool, stdout, stderr io.Writer) int {
+	if out == "" && !dryRun {
 		fmt.Fprintln(stderr, "usage: zpkb builder --out <dir> [--platform linux/aarch64] [--toolchain file]")
 		return 2
 	}
-	osn, arch, _ := strings.Cut(*platform, "/")
+	osn, arch, _ := strings.Cut(platform, "/")
 	if osn != "linux" {
 		fmt.Fprintf(stderr, "builder: %s images are not a thing — a scratch rootfs is a linux notion\n", osn)
 		return 2
 	}
-	if *dist != "" {
+	if dist != "" {
 		// --dist, like $ZPKG_DIST, is an ordered list of sources.
-		if srcs := artifact.SplitDistList(*dist); len(srcs) > 0 {
+		if srcs := artifact.SplitDistList(dist); len(srcs) > 0 {
 			artifact.DistBase, artifact.DistExtra = srcs[0], srcs[1:]
 		}
 	}
@@ -64,29 +95,29 @@ func runBuilder(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "builder:", err)
 		return 2
 	}
-	if *overlay != "" {
-		artifact.PantryOverlay = strings.TrimRight(*overlay, "/")
+	if overlay != "" {
+		artifact.PantryOverlay = strings.TrimRight(overlay, "/")
 	}
 
-	roots, err := toolchainRoots(*toolchain)
+	roots, err := toolchainRoots(toolchain)
 	if err != nil {
 		fmt.Fprintln(stderr, "builder:", err)
 		return 1
 	}
 
-	if *dryRun {
+	if dryRun {
 		return dryRunClosure(roots, osn, arch, stdout, stderr)
 	}
 
 	if err := stageBuilder(stageOptions{
-		Root:      *out,
+		Root:      out,
 		OS:        osn,
 		Arch:      arch,
 		Roots:     roots,
-		BkBin:     *bkBin,
-		ZpkxBin:   *zpkxBin,
-		MicroVM:   *microvm,
-		Container: *container,
+		BkBin:     bkBin,
+		ZpkxBin:   zpkxBin,
+		MicroVM:   microvm,
+		Container: container,
 		Overlay:   artifact.PantryOverlay,
 		Dist:      strings.Join(append([]string{artifact.DistBase}, artifact.DistExtra...), " "),
 		Log:       func(s string) { fmt.Fprintln(stdout, s) },

@@ -234,6 +234,22 @@ build {
 provides = ["bin/curl", "bin/curl-config"]
 ```
 
+## A seed pass: somebody else's toolchain as a build environment, named
+
+The first build of our own toolchain needs something that runs. A SEED pass uses another registry's signed artifacts (go-pkgx's) as the build environment of ONE pass, and records that it did:
+
+```sh
+zpkx --seed-from oci://ghcr.io/go-pkgx/packages --seed-ledger seed.jsonl -- \
+  zpkb factory --stage-only --seed-ledger seed.jsonl ...
+zpkb builder --seed-from oci://ghcr.io/go-pkgx/packages --seed-ledger seed.jsonl --out rootfs
+```
+
+- `factory --seed-ledger` needs `--stage-only` and a seed in force (`$ZPKX_SEED_FROM`, which zpkx sets for the command it runs). A seed in force without the flag is refused, and the flag without a seed is refused, so an artifact built from a seed is never signed unmarked. `--mirror-from` is refused with it.
+- The ledger goes into the stage plan (`seed`: the ledger digest and every entry). `publish-stage` writes the seed into the provenance (`externalParameters.seed`, `seed-source`, and one material per seed artifact with its digest) and into the SIGNED claim `zpkb-seed`, so the fact cannot be stripped afterwards.
+- A seed-built artifact is NEVER promotable: `--mirror-from ... --require-origin` refuses a signed `zpkb-seed`. Only a second pass that builds from our own outputs, with no seed, produces artifacts that promote.
+- `builder --seed-from` installs the rootfs from the seed (signatures verified, HTTP and unverified refused); it refuses `--dist` beside it, which would replace the seed as the source.
+- go-pkgx stays refused as a dependency source and as a publish target.
+
 ## Pinning every artifact a build needs: `sources`
 
 A build script that runs `curl` fetches bytes nothing pins. `sources` is the

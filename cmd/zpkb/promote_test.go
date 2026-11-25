@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestPromotionCarriesTheVerdictRatherThanRestatingIt(t *testing.T) {
 	}
 	want := sovereignSource
 	want.Digest = testDigest
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("origin = %+v, want the source's %+v carried through", got, want)
 	}
 	// Specifically: NOT rewritten to the destination registry.
