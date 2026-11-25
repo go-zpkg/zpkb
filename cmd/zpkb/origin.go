@@ -40,11 +40,21 @@ func runOrigin(args []string, stdout, stderr io.Writer) int {
 	dist := fs.String("dist", artifact.DistBase, "the registry the artifact was published to")
 	platform := fs.String("platform", "", "os/arch to read, e.g. linux/s390x (default: this machine)")
 	promotable := fs.Bool("promotable", false, "say nothing and exit 0 only if the provenance PROVES the host toolchain was not used; exit 1 otherwise, including when nothing is recorded")
+	seeded := fs.Bool("seeded", false, "say nothing and exit 0 only if a VERIFIED signed claim says the artifact was built from a seed; exit 1 otherwise")
+	seedLedger := fs.String("seed-ledger-sha256", "", "with --seeded: the ledger digest the claim must name")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "usage: zpkb origin [--dist d] [--platform os/arch] [--promotable] <project> <version>")
+		fmt.Fprintln(stderr, "usage: zpkb origin [--dist d] [--platform os/arch] [--promotable | --seeded [--seed-ledger-sha256 d]] <project> <version>")
+		return 2
+	}
+	if *seeded && *promotable {
+		fmt.Fprintln(stderr, "origin: --seeded and --promotable are opposite answers: a seed-built artifact is never promotable")
+		return 2
+	}
+	if *seedLedger != "" && !*seeded {
+		fmt.Fprintln(stderr, "origin: --seed-ledger-sha256 needs --seeded")
 		return 2
 	}
 	project, version := fs.Arg(0), fs.Arg(1)
@@ -57,6 +67,17 @@ func runOrigin(args []string, stdout, stderr io.Writer) int {
 	// ⛔ THE GATE READS THE SIGNED FACTS, NOT THE REFERRER. -promotable answers
 	// from verifiedOrigin alone; the unauthenticated provenance below is only
 	// what a human is shown.
+	if *seeded {
+		if err := promotionPreconditions(*dist); err != nil {
+			fmt.Fprintln(stderr, "origin:", err)
+			return 1
+		}
+		if _, err := verifiedSeed(*dist, project, version, osn, arch, *seedLedger); err != nil {
+			fmt.Fprintf(stderr, "origin: %s %s (%s/%s): %v\n", project, version, osn, arch, err)
+			return 1
+		}
+		return 0
+	}
 	if *promotable {
 		if err := promotionPreconditions(*dist); err != nil {
 			fmt.Fprintln(stderr, "origin:", err)

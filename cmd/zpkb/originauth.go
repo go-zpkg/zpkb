@@ -196,21 +196,27 @@ func authenticatedOrigin(digest string, payloads [][]byte, refs []artifact.Refer
 	return provOrigin{}, first
 }
 
+// provenanceAbout parses a provenance and requires its subject to be the given
+// artifact digest.
+func provenanceAbout(raw []byte, wantSubject string) (provenanceStatement, error) {
+	var st provenanceStatement
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return st, fmt.Errorf("provenance: %w", err)
+	}
+	for _, s := range st.Subject {
+		if s.Digest["sha256"] == wantSubject {
+			return st, nil
+		}
+	}
+	return st, errors.New("the provenance is about another artifact digest")
+}
+
 // checkProvenance applies the rules to a provenance whose sha256 the signature
 // names.
 func checkProvenance(raw []byte, wantSubject string, c originClaims) (provOrigin, error) {
-	var st provenanceStatement
-	if err := json.Unmarshal(raw, &st); err != nil {
-		return provOrigin{}, fmt.Errorf("provenance: %w", err)
-	}
-	subject := false
-	for _, s := range st.Subject {
-		if s.Digest["sha256"] == wantSubject {
-			subject = true
-		}
-	}
-	if !subject {
-		return provOrigin{}, errors.New("the provenance is about another artifact digest")
+	st, err := provenanceAbout(raw, wantSubject)
+	if err != nil {
+		return provOrigin{}, err
 	}
 	if c.Seed != "" {
 		return provOrigin{}, fmt.Errorf("the build used a seed (ledger sha256:%s) as its build environment: a seed-built artifact is never promoted — only a rebuild from our own outputs is", c.Seed)
