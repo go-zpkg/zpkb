@@ -783,6 +783,9 @@ func runPublishStage(args []string, stdout, stderr io.Writer) int {
 			// Named in the provenance and in the signed claim, never hidden.
 			origin.Seed = plan.Seed.Digest
 			origin.SeedEntries = plan.Seed.Entries
+			// The inputs came from the seed (seed-source), not from the registry
+			// the result is pushed to: stating both would contradict itself.
+			origin.Dist = ""
 		}
 		env := make([]moustache.Dep, 0, len(e.BuildEnv))
 		for _, d := range e.BuildEnv {

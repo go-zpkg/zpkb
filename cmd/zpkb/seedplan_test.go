@@ -421,3 +421,23 @@ func TestPublishStageCarriesTheSeedIntoTheProvenance(t *testing.T) {
 		t.Error("the pushed provenance does not name the seed ledger digest")
 	}
 }
+
+// F6: the inputs of a seeded build came from the seed, so the provenance must
+// not also say they came from the registry the result is pushed to.
+func TestASeedBuildsProvenanceDoesNotClaimItsDestinationAsItsInputs(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
+	r := newStageRig(t)
+	if code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries)); code != 0 {
+		t.Fatalf("stage-only: code=%d err=%q", code, r.h.errb.String())
+	}
+	if code, out, errb := r.publishStage("--to", stageDist, "--sign", r.key); code != 0 {
+		t.Fatalf("publish-stage: code=%d\n%s\n%s", code, out, errb)
+	}
+	all := strings.Join(r.pushes, "\n")
+	if !strings.Contains(all, "seed-source") {
+		t.Fatal("the pushed provenance does not carry seed-source: the check below would prove nothing")
+	}
+	if strings.Contains(all, "inputs-from") {
+		t.Error("a seed build's provenance claims inputs-from its destination registry")
+	}
+}
