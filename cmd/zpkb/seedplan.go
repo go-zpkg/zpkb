@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/go-zpkg/artifact"
 )
@@ -44,8 +45,8 @@ func checkSeedFlags(ledger, seedFrom string, stageOnly bool, mirrorFrom string) 
 // ledger is an error (a seed pass that installed nothing from its seed is not
 // what was asked for). A plan already carrying a seed accepts a ledger that
 // only GROWS — chunks of one pass share one ledger file — and refuses one that
-// lost an entry.
-func applySeed(p *stagePlan, ledgerPath string) error {
+// lost an entry. What it recorded is reported on out.
+func applySeed(p *stagePlan, ledgerPath string, out io.Writer) error {
 	es, err := artifact.ReadSeedLedger(ledgerPath)
 	if err != nil {
 		return err
@@ -64,16 +65,10 @@ func applySeed(p *stagePlan, ledgerPath string) error {
 			}
 		}
 	}
-	p.Seed = &stageSeed{Digest: artifact.SeedLedgerDigest(es), Entries: es}
+	seed := &stageSeed{Digest: artifact.SeedLedgerDigest(es), Entries: es}
+	p.Seed = seed
+	fmt.Fprintf(out, "seed: %d artifact(s) of the seed registry were the build environment (ledger sha256:%s) — named in the provenance, never promotable\n", len(seed.Entries), seed.Digest)
 	return nil
-}
-
-// seedSummary is the line a seed pass prints once its plan carries the seed.
-func seedSummary(p *stagePlan) string {
-	if p.Seed == nil {
-		return "seed: the plan names no seed"
-	}
-	return fmt.Sprintf("seed: %d artifact(s) of the seed registry were the build environment (ledger sha256:%s) — named in the provenance, never promotable", len(p.Seed.Entries), p.Seed.Digest)
 }
 
 // checkPlanSeed is run on the plan a stage already holds, before this run adds

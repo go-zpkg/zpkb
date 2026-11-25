@@ -575,11 +575,10 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 
 	if f.stage != nil {
 		if *seedLedger != "" && len(f.stage.Artifacts) > 0 {
-			if err := applySeed(f.stage, *seedLedger); err != nil {
+			if err := applySeed(f.stage, *seedLedger, stdout); err != nil {
 				fmt.Fprintln(stderr, "factory:", err)
 				return 1
 			}
-			fmt.Fprintln(stdout, seedSummary(f.stage))
 		}
 		if err := writeStagePlan(*artifacts, f.stage); err != nil {
 			fmt.Fprintln(stderr, "factory:", err)

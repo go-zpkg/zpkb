@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,27 +129,27 @@ func TestSeedFlagConsistency(t *testing.T) {
 
 func TestASeedLedgerIsCarriedIntoThePlanAndCanOnlyGrow(t *testing.T) {
 	p := &stagePlan{}
-	if err := applySeed(p, writeLedger(t, testSeedEntries[:1])); err != nil {
+	if err := applySeed(p, writeLedger(t, testSeedEntries[:1]), io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if p.Seed == nil || p.Seed.Digest != artifact.SeedLedgerDigest(p.Seed.Entries) || len(p.Seed.Entries) != 1 {
 		t.Fatalf("seed = %+v", p.Seed)
 	}
 	// A later chunk shares the ledger, which has grown.
-	if err := applySeed(p, writeLedger(t, testSeedEntries)); err != nil || len(p.Seed.Entries) != 2 {
+	if err := applySeed(p, writeLedger(t, testSeedEntries), io.Discard); err != nil || len(p.Seed.Entries) != 2 {
 		t.Fatalf("a grown ledger: %v, %+v", err, p.Seed)
 	}
 	// A ledger that lost an entry understates the seed.
-	if err := applySeed(p, writeLedger(t, testSeedEntries[:1])); err == nil || !strings.Contains(err.Error(), "no longer has") {
+	if err := applySeed(p, writeLedger(t, testSeedEntries[:1]), io.Discard); err == nil || !strings.Contains(err.Error(), "no longer has") {
 		t.Fatalf("a shrunk ledger was accepted: %v", err)
 	}
 }
 
 func TestAnEmptyOrMissingSeedLedgerIsRefused(t *testing.T) {
-	if err := applySeed(&stagePlan{}, writeLedger(t, nil)); err == nil || !strings.Contains(err.Error(), "empty") {
+	if err := applySeed(&stagePlan{}, writeLedger(t, nil), io.Discard); err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Errorf("an empty ledger: %v", err)
 	}
-	if err := applySeed(&stagePlan{}, filepath.Join(t.TempDir(), "absent")); err == nil {
+	if err := applySeed(&stagePlan{}, filepath.Join(t.TempDir(), "absent"), io.Discard); err == nil {
 		t.Error("a missing ledger was accepted")
 	}
 	// A ledger that cannot be read is refused for what it is, not reported as an
@@ -157,7 +158,7 @@ func TestAnEmptyOrMissingSeedLedgerIsRefused(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySeed(&stagePlan{}, bad); err == nil || strings.Contains(err.Error(), "is empty") {
+	if err := applySeed(&stagePlan{}, bad, io.Discard); err == nil || strings.Contains(err.Error(), "is empty") {
 		t.Errorf("a corrupt ledger: %v", err)
 	}
 }
@@ -317,12 +318,18 @@ func TestTheFactoryStagesTheSeedLedgerIntoThePlan(t *testing.T) {
 	}
 }
 
-func TestTheSeedSummaryNamesTheLedgerOrSaysThereIsNone(t *testing.T) {
-	if got := seedSummary(&stagePlan{}); !strings.Contains(got, "names no seed") {
-		t.Errorf("no seed: %q", got)
+func TestApplySeedReportsTheLedgerItRecorded(t *testing.T) {
+	p := &stagePlan{}
+	var out strings.Builder
+	if err := applySeed(p, writeLedger(t, testSeedEntries), &out); err != nil {
+		t.Fatal(err)
 	}
-	p := &stagePlan{Seed: &stageSeed{Digest: "abc", Entries: testSeedEntries}}
-	if got := seedSummary(p); !strings.Contains(got, "2 artifact(s)") || !strings.Contains(got, "sha256:abc") {
-		t.Errorf("a seed: %q", got)
+	got := out.String()
+	if !strings.Contains(got, "2 artifact(s)") || !strings.Contains(got, "sha256:"+p.Seed.Digest) {
+		t.Errorf("summary: %q", got)
+	}
+	out.Reset()
+	if err := applySeed(&stagePlan{}, writeLedger(t, nil), &out); err == nil || out.Len() != 0 {
+		t.Errorf("a refused ledger printed %q (%v)", out.String(), err)
 	}
 }
