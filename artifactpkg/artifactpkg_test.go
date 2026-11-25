@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/go-zpkg/artifact"
@@ -386,8 +385,8 @@ func TestWriteArtifactVersionsCloseError(t *testing.T) {
 // which is the defect reproduced rather than described.
 func TestArtifactDoesNotCarryTheBuildersUmask(t *testing.T) {
 	artifactUnder := func(mask int) []string {
-		old := syscall.Umask(mask)
-		defer syscall.Umask(old)
+		old := setUmask(mask)
+		defer setUmask(old)
 		dir := t.TempDir()
 		// MkdirAll and WriteFile both go through the umask.
 		if err := os.MkdirAll(filepath.Join(dir, "lib", "pkgconfig"), 0o777); err != nil {
