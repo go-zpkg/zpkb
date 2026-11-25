@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -63,6 +65,20 @@ func TestTheSeedClaimNeedsASignatureAndItsProvenance(t *testing.T) {
 	}
 	if _, err := authenticatedSeed(d, [][]byte{[]byte("not json")}, r, ""); err == nil {
 		t.Error("an unreadable payload passed")
+	}
+	// A signature that names a provenance which is about another artifact.
+	for _, x := range r2 {
+		if x.ArtifactType != artifactInToto {
+			continue
+		}
+		sum := sha256.Sum256(x.Blob)
+		named, err := originSigning("acme.org/tool:1.2.3", d, originClaims{ManifestDigest: d, Seed: o.Seed, Provenance: hex.EncodeToString(sum[:])})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := authenticatedSeed(d, [][]byte{named}, r2, ""); err == nil || !strings.Contains(err.Error(), "another artifact digest") {
+			t.Errorf("a signed provenance about another artifact: %v", err)
+		}
 	}
 	// A seed claim with no provenance claim.
 	pl, err := originSigning("acme.org/tool:1.2.3", d, originClaims{ManifestDigest: d, Seed: o.Seed})
