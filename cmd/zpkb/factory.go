@@ -579,7 +579,7 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintln(stderr, "factory:", err)
 				return 1
 			}
-			fmt.Fprintf(stdout, "seed: %d artifact(s) of the seed registry were the build environment (ledger sha256:%s) — named in the provenance, never promotable\n", len(f.stage.Seed.Entries), f.stage.Seed.Digest)
+			fmt.Fprintln(stdout, seedSummary(f.stage))
 		}
 		if err := writeStagePlan(*artifacts, f.stage); err != nil {
 			fmt.Fprintln(stderr, "factory:", err)

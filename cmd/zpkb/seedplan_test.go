@@ -251,3 +251,68 @@ func TestGoPkgxStaysRefusedAsADependencySource(t *testing.T) {
 		t.Fatal("go-pkgx accepted as a dependency source")
 	}
 }
+
+// A plan's seed is bounded: exactly the limit is read, one more is refused.
+func TestAPlanSeedIsBounded(t *testing.T) {
+	fill := func(n int) func(*stagePlan) {
+		return func(p *stagePlan) {
+			es := make([]artifact.SeedEntry, n)
+			for i := range es {
+				es[i] = testSeedEntries[0]
+			}
+			p.Seed.Entries = es
+			p.Seed.Digest = artifact.SeedLedgerDigest(es)
+		}
+	}
+	if _, err := parseStagePlan(planWith(t, fill(maxSeedEntries))); err != nil {
+		t.Errorf("a seed of exactly %d entries: %v", maxSeedEntries, err)
+	}
+	if _, err := parseStagePlan(planWith(t, fill(maxSeedEntries+1))); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Errorf("a seed of %d entries: %v", maxSeedEntries+1, err)
+	}
+}
+
+// The factory itself, not only the helpers it calls, refuses and carries a seed.
+func TestTheFactoryRefusesSeedFlagsWithoutASeed(t *testing.T) {
+	r := newStageRig(t)
+	t.Setenv("ZPKX_SEED_FROM", "")
+	code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries))
+	if code != 2 || !strings.Contains(r.h.errb.String(), "no seed is in force") {
+		t.Errorf("code=%d err=%q", code, r.h.errb.String())
+	}
+}
+
+func TestTheFactoryRefusesToMixSeededAndUnseededArtifactsInOneStage(t *testing.T) {
+	r := newStageRig(t)
+	t.Setenv("ZPKX_SEED_FROM", "")
+	r.stage(t)
+	t.Setenv("ZPKX_SEED_FROM", "oci://seed.test/x")
+	code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries))
+	if code != 1 || !strings.Contains(r.h.errb.String(), "one pass has one seed") {
+		t.Errorf("code=%d err=%q", code, r.h.errb.String())
+	}
+}
+
+func TestTheFactoryStagesTheSeedLedgerIntoThePlan(t *testing.T) {
+	t.Setenv("ZPKX_SEED_FROM", "oci://seed.test/x")
+	r := newStageRig(t)
+	empty := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, nil))
+	if empty != 1 || !strings.Contains(r.h.errb.String(), "is empty") {
+		t.Fatalf("an empty ledger: code=%d err=%q", empty, r.h.errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(r.h.artifacts, stagePlanName)); err == nil {
+		t.Error("a plan was written under a seed that named nothing")
+	}
+	code := r.h.run(t, "--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger", writeLedger(t, testSeedEntries))
+	if code != 0 || !strings.Contains(r.h.out.String(), "seed: 2 artifact(s)") {
+		t.Fatalf("code=%d out=%q err=%q", code, r.h.out.String(), r.h.errb.String())
+	}
+	b, err := os.ReadFile(filepath.Join(r.h.artifacts, stagePlanName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parseStagePlan(b)
+	if err != nil || p.Seed == nil || len(p.Seed.Entries) != 2 {
+		t.Errorf("the plan does not carry the seed: %v %+v", err, p.Seed)
+	}
+}

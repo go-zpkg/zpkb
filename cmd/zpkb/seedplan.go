@@ -68,6 +68,14 @@ func applySeed(p *stagePlan, ledgerPath string) error {
 	return nil
 }
 
+// seedSummary is the line a seed pass prints once its plan carries the seed.
+func seedSummary(p *stagePlan) string {
+	if p.Seed == nil {
+		return "seed: the plan names no seed"
+	}
+	return fmt.Sprintf("seed: %d artifact(s) of the seed registry were the build environment (ledger sha256:%s) — named in the provenance, never promotable", len(p.Seed.Entries), p.Seed.Digest)
+}
+
 // checkPlanSeed is run on the plan a stage already holds, before this run adds
 // to it: one pass has one seed, so a seeded run does not extend a plan of
 // unseeded artifacts and an unseeded run does not extend a seeded one.
