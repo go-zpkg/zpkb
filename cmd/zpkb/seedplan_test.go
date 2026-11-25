@@ -318,6 +318,29 @@ func TestTheFactoryStagesTheSeedLedgerIntoThePlan(t *testing.T) {
 	}
 }
 
+// A second run that extends a seeded plan under a ledger which has lost an
+// entry the plan already names is refused, and the plan is left as it was.
+func TestTheFactoryRefusesToExtendAPlanUnderAShrunkenLedger(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
+	r := newStageRig(t)
+	args := []string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist, "--seed-ledger"}
+	if code := r.h.run(t, append(args, writeLedger(t, testSeedEntries))...); code != 0 {
+		t.Fatalf("first run: code=%d err=%q", code, r.h.errb.String())
+	}
+	before, err := os.ReadFile(filepath.Join(r.h.artifacts, stagePlanName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := r.h.run(t, append(args, writeLedger(t, testSeedEntries[:1]))...)
+	if code != 1 || !strings.Contains(r.h.errb.String(), "no longer has") {
+		t.Fatalf("code=%d err=%q", code, r.h.errb.String())
+	}
+	after, err := os.ReadFile(filepath.Join(r.h.artifacts, stagePlanName))
+	if err != nil || string(after) != string(before) {
+		t.Errorf("the plan changed under a refused run: %v", err)
+	}
+}
+
 // F2: the ledger is read once, at the start, and what the outside of the build
 // recorded for it is checked then. A rewritten ledger is refused.
 func TestASeedLedgerThatDoesNotMatchTheRecordedDigestIsRefused(t *testing.T) {
