@@ -209,6 +209,7 @@ func (s *stageSeed) validate() error {
 			return fmt.Errorf("plan: seed entry %d names no project, version and digest", i)
 		}
 		strs := append([]string{e.Project, e.Version, e.Digest, e.Source}, e.Signers...)
+		strs = append(strs, e.Keys...)
 		for _, v := range strs {
 			if err := cleanStageString(fmt.Sprintf("plan seed entry %d", i), v, maxStageString); err != nil {
 				return err

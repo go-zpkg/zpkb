@@ -23,7 +23,7 @@ import (
 // force is refused (the ledger would be a claim about nothing).
 
 // checkSeedFlags is the consistency rule between --seed-ledger, the seed zpkx
-// put in the environment (seedFrom is $ZPKX_SEED_FROM), --stage-only and
+// put in the environment (seedFrom is $ZPKX_SEEDED, a marker zpkx never reads), --stage-only and
 // --mirror-from.
 func checkSeedFlags(ledger, seedFrom string, stageOnly bool, mirrorFrom string) error {
 	switch {
@@ -32,7 +32,7 @@ func checkSeedFlags(ledger, seedFrom string, stageOnly bool, mirrorFrom string) 
 	case ledger != "" && seedFrom == "":
 		return errors.New("--seed-ledger records a seed, and no seed is in force (run it under `zpkx --seed-from <registry>`)")
 	case ledger == "":
-		return errors.New("a seed is in force ($ZPKX_SEED_FROM) and --seed-ledger is not given: the artifacts would be signed without naming their seed")
+		return errors.New("a seed is in force ($ZPKX_SEEDED) and --seed-ledger is not given: the artifacts would be signed without naming their seed")
 	case !stageOnly:
 		return errors.New("--seed-ledger needs --stage-only: the plan carries the seed to `zpkb publish-stage`, which signs it")
 	case mirrorFrom != "":
@@ -47,13 +47,35 @@ func checkSeedFlags(ledger, seedFrom string, stageOnly bool, mirrorFrom string) 
 // only GROWS — chunks of one pass share one ledger file — and refuses one that
 // lost an entry. What it recorded is reported on out.
 func applySeed(p *stagePlan, ledgerPath string, out io.Writer) error {
-	es, err := artifact.ReadSeedLedger(ledgerPath)
+	snap, err := snapshotSeed(ledgerPath, "")
 	if err != nil {
 		return err
 	}
-	if len(es) == 0 {
-		return fmt.Errorf("seed ledger %s is empty: the pass installed nothing from its seed", ledgerPath)
+	return applySeedEntries(p, snap, out)
+}
+
+// snapshotSeed reads the ledger ONCE, bounded (artifact.ReadSeedLedger), and
+// refuses an empty one. It is called at the start of a run, before any recipe
+// has executed: the ledger lives where a recipe can write, so what is signed is
+// what the seed installation left, never what the file says by the time the
+// recipes are done. A non-empty wantDigest is the digest the outside of the
+// build recorded for that ledger; a ledger that does not match it is refused.
+func snapshotSeed(ledgerPath, wantDigest string) ([]artifact.SeedEntry, error) {
+	es, err := artifact.ReadSeedLedger(ledgerPath)
+	if err != nil {
+		return nil, err
 	}
+	if len(es) == 0 {
+		return nil, fmt.Errorf("seed ledger %s is empty: the pass installed nothing from its seed", ledgerPath)
+	}
+	if got := artifact.SeedLedgerDigest(es); wantDigest != "" && got != wantDigest {
+		return nil, fmt.Errorf("seed ledger %s has digest sha256:%s, the build recorded sha256:%s: refusing a ledger that changed", ledgerPath, got, wantDigest)
+	}
+	return es, nil
+}
+
+// applySeedEntries records an already-read ledger on the plan; see applySeed.
+func applySeedEntries(p *stagePlan, es []artifact.SeedEntry, out io.Writer) error {
 	if old := p.Seed; old != nil {
 		have := map[string]bool{}
 		for _, e := range es {

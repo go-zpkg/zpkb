@@ -474,6 +474,23 @@ func TestSanitizedEnvPassesCacheAndQemu(t *testing.T) {
 	}
 }
 
+// A recipe sees the seed marker, so the zpkx it calls refuses a seed flag of its
+// own; the spellings that used to START a seed do not travel at all.
+func TestSanitizedEnvForwardsTheSeedMarkerAndNothingThatStartsASeed(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
+	t.Setenv("ZPKX_SEED_FROM", "oci://ghcr.io/go-pkgx/packages")
+	t.Setenv("ZPKX_SEED_LEDGER", "/x")
+	env := SanitizedEnv("/root", "/pkgx")
+	if !slices.Contains(env, "ZPKX_SEEDED=oci://ghcr.io/go-pkgx/packages") {
+		t.Error("the seed marker did not reach the recipe")
+	}
+	for _, got := range env {
+		if strings.HasPrefix(got, "ZPKX_SEED_") {
+			t.Errorf("a seed spelling travelled: %q", got)
+		}
+	}
+}
+
 // A package's own published artifact must not join the toolchain of its own
 // build. It would shadow the thing being built with an older copy — and when
 // that copy cannot start, the package can no longer be repaired at all:
