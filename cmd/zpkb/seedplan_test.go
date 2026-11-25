@@ -316,3 +316,13 @@ func TestTheFactoryStagesTheSeedLedgerIntoThePlan(t *testing.T) {
 		t.Errorf("the plan does not carry the seed: %v %+v", err, p.Seed)
 	}
 }
+
+func TestTheSeedSummaryNamesTheLedgerOrSaysThereIsNone(t *testing.T) {
+	if got := seedSummary(&stagePlan{}); !strings.Contains(got, "names no seed") {
+		t.Errorf("no seed: %q", got)
+	}
+	p := &stagePlan{Seed: &stageSeed{Digest: "abc", Entries: testSeedEntries}}
+	if got := seedSummary(p); !strings.Contains(got, "2 artifact(s)") || !strings.Contains(got, "sha256:abc") {
+		t.Errorf("a seed: %q", got)
+	}
+}
