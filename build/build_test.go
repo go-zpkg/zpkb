@@ -739,6 +739,43 @@ func TestTouchAutotoolsOnGlibcsPreconfigure(t *testing.T) {
 	}
 }
 
+// TestTouchAutotoolsKeepsAutomakesShippedAmhelloFresh. automake's
+// doc/amhello-1.0.tar.gz is shipped built and its rule depends on configure.ac;
+// the inputs tier makes configure.ac newer, so unless the tarball is
+// rejuvenated too, make runs autoreconf + distcheck of the example and the
+// build of automake itself fails.
+func TestTouchAutotoolsKeepsAutomakesShippedAmhelloFresh(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "doc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Date(2026, 11, 7, 16, 11, 0, 0, time.UTC)
+	cfg := filepath.Join(dir, "configure.ac")
+	tgz := filepath.Join(dir, "doc", "amhello-1.0.tar.gz")
+	for _, p := range []string{cfg, tgz} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := TouchAutotools(dir); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := os.Stat(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts, err := os.Stat(tgz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cs.ModTime().Before(ts.ModTime()) {
+		t.Errorf("amhello-1.0.tar.gz (%v) is not newer than configure.ac (%v): make will rebuild it", ts.ModTime(), cs.ModTime())
+	}
+}
+
 // ⛔⛔ THE RESOLVED LIST MUST REACH THE CALLER, not just the tokens.
 //
 // DepTokens computed project+version+prefix for the whole build and runtime
