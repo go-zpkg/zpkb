@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -76,7 +77,23 @@ func ccShim(name string, args []string, stderr io.Writer) int {
 	if p := os.Getenv(osoPrefixEnv); p != "" && !compileOnly(args) {
 		all = append(all, "-Wl,-oso_prefix,"+p)
 	}
+	// ⛔ A shim must not be able to call itself through the compiler it drives.
+	// clang falls back to an external `<triple>-gcc` for a language it does not
+	// build (gcc's configure probes `-x ada`), and that name is one of OUR
+	// shims, which re-execs clang, which looks the fallback up again: a fork
+	// chain with no bound, 58 GB of anonymous memory in ten minutes, and the
+	// whole runner host OOM-killed (2026-11-26, run 45888140306). The depth rides
+	// in the environment, which every child inherits.
+	depth, _ := strconv.Atoi(os.Getenv(shimDepthEnv))
+	if depth >= maxShimDepth {
+		fmt.Fprintf(stderr, "zpkb %s: refusing to run: this compiler shim has re-entered itself %d times (%s=%d) — the driver %s hands the call back to a shim; configure probes for an unsupported language (-x ada, gnat) land here\n", name, depth, shimDepthEnv, depth, bin)
+		return 127
+	}
 	cmd := execCommand(bin, all...)
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env, shimDepthEnv+"="+strconv.Itoa(depth+1))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, stderr
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
@@ -88,6 +105,14 @@ func ccShim(name string, args []string, stderr io.Writer) int {
 	}
 	return 0
 }
+
+// shimDepthEnv counts the compiler shims between the build and the running
+// process; maxShimDepth is the most a legitimate build nests (shim -> driver ->
+// linker shim is two).
+const (
+	shimDepthEnv = "ZPKB_SHIM_DEPTH"
+	maxShimDepth = 8
+)
 
 // prefixMapEnv carries OLD=NEW for -ffile-prefix-map; buildscript.Wrap exports
 // it from the build's actual cache root.

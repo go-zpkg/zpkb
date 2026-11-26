@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -217,5 +219,47 @@ func TestCCShimCompileOnlyForms(t *testing.T) {
 		if !strings.Contains(got, "--sysroot=/pkgx/glibc") {
 			t.Errorf("%s lost the sysroot, which it needs: %v", form, gotArgs)
 		}
+	}
+}
+
+// TestCCShimRefusesToRecurse: clang falls back to an external triple-prefixed
+// gcc, which is a shim that re-execs clang. Without a bound that was a fork
+// chain that took a 62 GB runner host down (2026-11-26).
+func TestCCShimRefusesToRecurse(t *testing.T) {
+	fakeDrivers(t)
+	old := execCommand
+	defer func() { execCommand = old }()
+	t.Setenv("ZPKB_CC", "clang --sysroot=/pkgx/glibc")
+
+	ran := 0
+	var last *exec.Cmd
+	execCommand = func(string, ...string) *exec.Cmd {
+		ran++
+		last = exec.Command("true")
+		last.Env = []string{"A=b"}
+		return last
+	}
+	var errb bytes.Buffer
+
+	// Past the bound it refuses, runs nothing, and says why.
+	t.Setenv(shimDepthEnv, strconv.Itoa(maxShimDepth))
+	if code := ccShim("cc", []string{"-x", "ada"}, &errb); code != 127 || ran != 0 || !strings.Contains(errb.String(), "re-entered itself") {
+		t.Fatalf("code %d, ran %d, stderr %q", code, ran, errb.String())
+	}
+
+	// One below the bound still runs, and the child is told its depth.
+	t.Setenv(shimDepthEnv, strconv.Itoa(maxShimDepth-1))
+	if code := ccShim("cc", nil, &errb); code != 0 || ran != 1 {
+		t.Fatalf("below the bound: code %d, ran %d", code, ran)
+	}
+	want := shimDepthEnv + "=" + strconv.Itoa(maxShimDepth)
+	if !slices.Contains(last.Env, want) || !slices.Contains(last.Env, "A=b") {
+		t.Fatalf("child env %q lacks %s or lost its own entries", last.Env, want)
+	}
+
+	// An unset counter starts at zero.
+	t.Setenv(shimDepthEnv, "")
+	if code := ccShim("cc", nil, &errb); code != 0 || !slices.Contains(last.Env, shimDepthEnv+"=1") {
+		t.Fatalf("first shim: code %d, env %q", code, last.Env)
 	}
 }
