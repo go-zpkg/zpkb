@@ -145,8 +145,13 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	defer p.mu.Unlock()
 	p.calls++
 	ledger := filepath.Join(p.dir, fmt.Sprintf("ledger-%d", p.calls))
-	if _, err := os.Lstat(ledger); err == nil {
-		return "", fmt.Errorf("the ledger %s already exists before its call: refusing a file this process did not create", ledger)
+	// Only "does not exist" is absence: any other answer (an unreadable or
+	// replaced directory) is a ledger path this process cannot vouch for.
+	if _, err := os.Lstat(ledger); !errors.Is(err, fs.ErrNotExist) {
+		if err == nil {
+			return "", fmt.Errorf("the ledger %s already exists before its call: refusing a file this process did not create", ledger)
+		}
+		return "", fmt.Errorf("cannot tell whether the ledger %s exists before its call: %w", ledger, err)
 	}
 	args := []string{"--seed-from", p.from, "--seed-ledger", ledger}
 	for _, s := range specs {
@@ -167,6 +172,8 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 			return "", err
 		}
 		p.add(es)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("cannot read the ledger %s the call wrote: %w", ledger, err)
 	}
 	return out.String(), nil
 }

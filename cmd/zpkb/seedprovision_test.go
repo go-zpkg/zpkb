@@ -76,6 +76,39 @@ func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
 	}
 }
 
+// Only "does not exist" is absence. A directory that cannot be looked into
+// (here: it is a file) is not a ledger path to run a call against.
+func TestProvisionerRefusesALedgerPathItCannotLookUp(t *testing.T) {
+	ran := filepath.Join(t.TempDir(), "ran")
+	z := fakeZpkx(t, ": > "+ran+"\nexit 0\n")
+	dir := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &seedProvisioner{zpkx: z, from: "oci://seed", dir: dir, seen: map[string]bool{}}
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "cannot tell") {
+		t.Errorf("an unreadable ledger path: %v", err)
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("zpkx ran against a ledger path that could not be looked up")
+	}
+}
+
+// The directory is swapped for a file while the call runs: the ledger it wrote
+// cannot be read back, which is not the same as the call having written none.
+func TestProvisionerRefusesALedgerItCannotReadBack(t *testing.T) {
+	z := fakeZpkx(t, "d=$(dirname \"$4\"); rm -rf \"$d\"; : > \"$d\"\nexit 0\n")
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "cannot read the ledger") {
+		t.Errorf("a ledger behind a replaced directory: %v", err)
+	}
+}
+
 func TestProvisionerRecordsWhatEachClosureInstalled(t *testing.T) {
 	// $5 is the ledger path: arguments are --seed-from X --seed-ledger L +spec...
 	z := fakeZpkx(t, `
