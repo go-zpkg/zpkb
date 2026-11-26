@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -139,16 +140,25 @@ func TestSeedBuildEndToEndWithTheRealZpkxAndZpkb(t *testing.T) {
 	}
 	detail, _ := os.ReadFile(filepath.Join(work, "failures-detail.txt"))
 	t.Logf("factory stdout:\n%s\nstderr:\n%s\nfailures:\n%s", stdout, stderr, detail)
-	// The factory provisioned the closures of its recipes into the same ledger,
-	// so the digest the plan carries is the ledger's as it stands now.
-	final, stderr2, err := e2eRun(t, base, zpkx, "--seed-digest", ledger)
-	if err != nil || !strings.HasPrefix(strings.TrimSpace(final), "sha256:") {
-		t.Fatalf("zpkx --seed-digest after the factory = %q, %v\n%s", final, err, stderr2)
-	}
-	for _, want := range []string{e2eProject, "zlib.net", strings.TrimPrefix(strings.TrimSpace(final), "sha256:")} {
+	for _, want := range []string{e2eProject, "zlib.net"} {
 		if !strings.Contains(string(plan), want) {
 			t.Errorf("the stage plan does not mention %q:\n%s", want, plan)
 		}
+	}
+	// The factory provisioned the closures of its recipes through the real zpkx
+	// into ledgers of its own and merged them into what the plan signs, so the
+	// digest the plan carries covers more than the one the outside recorded.
+	var parsed struct {
+		Seed struct {
+			Digest  string            `json:"digest"`
+			Entries []json.RawMessage `json:"entries"`
+		} `json:"seed"`
+	}
+	if err := json.Unmarshal(plan, &parsed); err != nil {
+		t.Fatalf("the stage plan is not JSON: %v", err)
+	}
+	if len(parsed.Seed.Digest) != 64 || parsed.Seed.Digest == strings.TrimPrefix(digest, "sha256:") || len(parsed.Seed.Entries) == 0 {
+		t.Errorf("the plan's seed = %d entries, digest %q; want the provisioned set, not the outside's %q", len(parsed.Seed.Entries), parsed.Seed.Digest, digest)
 	}
 	// The one that asked zpkx for a package from inside its build was refused.
 	if strings.Contains(string(plan), e2eNested) {
