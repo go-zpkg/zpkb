@@ -134,8 +134,18 @@ func TestProvisionerRefusesAnOversizedLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "larger than") {
-		t.Errorf("an oversized ledger: %v", err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Provision([]string{"a"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "larger than") {
+			t.Errorf("an oversized ledger: %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the call stayed blocked on a full pipe")
 	}
 }
 
