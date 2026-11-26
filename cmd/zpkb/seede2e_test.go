@@ -117,7 +117,9 @@ func TestSeedBuildEndToEndWithTheRealZpkxAndZpkb(t *testing.T) {
 
 	// The inside: the factory runs under the seed zpkx marks for what it runs.
 	artifacts := filepath.Join(work, "dist")
-	inside := append(os.Environ(), "ZPKG_DIR="+store, "ZPKX_SEEDED="+e2eSeedRegistry)
+	// The plan resolves dependencies through the upstream the distribution does
+	// not carry, as the real factory does while the rebuild is in flight.
+	inside := append(os.Environ(), "ZPKG_DIR="+store, "ZPKX_SEEDED="+e2eSeedRegistry, "ZPKG_UPSTREAM_DIST=https://dist.pkgx.dev")
 	stdout, stderr, runErr := e2eRun(t, inside, zpkb, "factory",
 		"--stage-only", "--platform", runtime.GOOS+"/"+map[string]string{"amd64": "x86-64", "arm64": "aarch64"}[runtime.GOARCH],
 		"--recipe-dir", pantry, "--recipes", e2eProject+" "+e2eNested, "--max-versions", "1",
