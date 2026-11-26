@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -386,6 +387,23 @@ func TestTheFactoryRefusesALedgerThatDoesNotMatchItsRecordedDigest(t *testing.T)
 		"--seed-ledger", writeLedger(t, testSeedEntries[:1]), "--seed-ledger-sha256", "sha256:"+artifact.SeedLedgerDigest(testSeedEntries))
 	if code != 2 || !strings.Contains(r.h.errb.String(), "changed") {
 		t.Errorf("code=%d err=%q", code, r.h.errb.String())
+	}
+}
+
+// A provisioner whose plan-phase ledger was written to stops the factory before
+// any seed is signed, and no plan is written.
+func TestTheFactoryStopsWhenTheProvisionerDirectoryWasWrittenTo(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://ghcr.io/go-pkgx/packages")
+	old := verifyProvisioner
+	t.Cleanup(func() { verifyProvisioner = old })
+	verifyProvisioner = func(*seedProvisioner) error { return errors.New("the plan-phase seed ledger is not empty") }
+	r := newStageRig(t)
+	code := r.h.run(t, append([]string{"--stage-only", "--recipes", "app.org", "--max-versions", "1", "--to", stageDist}, ledgerFlags(t, testSeedEntries)...)...)
+	if code != 1 || !strings.Contains(r.h.errb.String(), "not empty") {
+		t.Errorf("code=%d err=%q", code, r.h.errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(r.h.artifacts, stagePlanName)); err == nil {
+		t.Error("a plan was written after the provisioner check failed")
 	}
 }
 

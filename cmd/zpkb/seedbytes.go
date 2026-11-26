@@ -16,7 +16,9 @@ import (
 // bytesSource is where the signed artifact's bytes come from.
 type bytesSource interface {
 	ArtifactDigest(project, ver, osn, arch string) (string, error)
-	Pull(project, ver, osn, arch string) (io.ReadCloser, string, error)
+	// Pull returns the artifact's bytes, its extension and the digest of the
+	// bytes it staged (as they were written).
+	Pull(project, ver, osn, arch string) (io.ReadCloser, string, string, error)
 }
 
 // ociBytes is the registry as a bytesSource.
@@ -29,9 +31,12 @@ func (o ociBytes) ArtifactDigest(project, ver, osn, arch string) (string, error)
 // pulledBlob is a staged blob that closes itself and is only used on success.
 type pulledBlob struct{ *artifact.BlobFile }
 
-func (o ociBytes) Pull(project, ver, osn, arch string) (io.ReadCloser, string, error) {
+func (o ociBytes) Pull(project, ver, osn, arch string) (io.ReadCloser, string, string, error) {
 	f, ext, err := o.c.PullFile(project, ver, osn, arch)
-	return pulledBlob{f}, ext, err
+	if err != nil {
+		return nil, "", "", err
+	}
+	return pulledBlob{f}, ext, f.Digest, nil
 }
 
 // installedBytes says the files under t.path are the files of the artifact whose
@@ -60,11 +65,16 @@ func compareInstalled(src bytesSource, t seedTarget, osn, arch, digest string) e
 	if got != digest {
 		return fmt.Errorf("the registry now serves digest %s, the signature vouches for %s", got, digest)
 	}
-	f, ext, err := src.Pull(t.project, t.version, osn, arch)
+	f, ext, staged, err := src.Pull(t.project, t.version, osn, arch)
 	if err != nil {
 		return fmt.Errorf("cannot pull the artifact to compare the installed bytes: %w", err)
 	}
 	defer f.Close()
+	// The pull resolves the tag again, so the digest read above does not bind
+	// it: the bytes themselves must hash to what the signature vouches for.
+	if staged != digest {
+		return fmt.Errorf("the pulled bytes hash to %s, the signature vouches for %s", staged, digest)
+	}
 	return unpackAndCompare(f, ext, t.path)
 }
 
@@ -97,7 +107,7 @@ func walkRel(root string, fn func(rel string) error) error {
 }
 
 // sameTree requires installed to hold exactly the entries of ref: same kinds,
-// same permission bits, same file contents, same link targets. The one file the
+// same permission, setuid, setgid and sticky bits (directories too), same file contents, same link targets. The one file the
 // installer adds on its own, the seed marker, is allowed at the top.
 // Modification times are not content and are not compared.
 func sameTree(ref, installed string) error {
@@ -116,6 +126,9 @@ func sameTree(ref, installed string) error {
 		return nil
 	})
 }
+
+// modeBits is what sameEntry compares of a mode, besides the entry's kind.
+const modeBits = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
 
 // fileSum is the content hash of a file; a seam so a read failure is testable
 // without depending on file permissions.
@@ -136,6 +149,15 @@ func sameEntry(want, have, rel string) error {
 	if ws.Mode().Type() != hs.Mode().Type() {
 		return fmt.Errorf("%s is a %v in the artifact and a %v installed", rel, ws.Mode().Type(), hs.Mode().Type())
 	}
+	// Permission bits and the setuid, setgid and sticky bits, of files and
+	// directories alike. A link's own mode is not meaningful on every system, and
+	// the root is the scratch directory the comparison made, not an entry of the
+	// artifact.
+	if ws.Mode()&fs.ModeSymlink == 0 && rel != "." {
+		if wm, hm := ws.Mode()&modeBits, hs.Mode()&modeBits; wm != hm {
+			return fmt.Errorf("%s has mode %v in the artifact and %v installed", rel, wm, hm)
+		}
+	}
 	switch {
 	case ws.Mode()&fs.ModeSymlink != 0:
 		wl, _ := os.Readlink(want) // Lstat said it is a link
@@ -144,9 +166,6 @@ func sameEntry(want, have, rel string) error {
 			return fmt.Errorf("%s is a link to %q in the artifact and to %q installed", rel, wl, hl)
 		}
 	case ws.Mode().IsRegular():
-		if ws.Mode().Perm() != hs.Mode().Perm() {
-			return fmt.Errorf("%s has mode %v in the artifact and %v installed", rel, ws.Mode().Perm(), hs.Mode().Perm())
-		}
 		wd, werr := fileSum(want)
 		hd, herr := fileSum(have)
 		if err := errors.Join(werr, herr); err != nil {

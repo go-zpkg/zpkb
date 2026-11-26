@@ -249,6 +249,8 @@ zpkb builder --seed-from oci://ghcr.io/go-pkgx/packages --seed-ledger seed.jsonl
 - A seed-built artifact is NEVER promotable: `--mirror-from ... --require-origin` refuses a signed `zpkb-seed`. Only a second pass that builds from our own outputs, with no seed, produces artifacts that promote.
 - `builder --seed-from` installs the rootfs from the seed (signatures verified, HTTP and unverified refused); it refuses `--dist` beside it, which would replace the seed as the source.
 - go-pkgx stays refused as a dependency source and as a publish target.
+- `origin --seeded` compares the installed tree with the artifact the signature vouches for: the pulled bytes must hash to the signed digest (a registry that re-points the tag between the digest read and the pull is refused), and every file and directory must match in kind, permission, setuid, setgid and sticky bits, content and link target.
+- The provisioner's per-call ledgers are refused when they exist before their call, and the plan-phase ledger must still be empty when the seed is signed. They live in a private 0700 temporary of the factory's user, so code running as that same user or as root while a build runs is a limit of that directory, not something these checks remove.
 
 ## Pinning every artifact a build needs: `sources`
 

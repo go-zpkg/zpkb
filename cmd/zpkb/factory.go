@@ -606,6 +606,10 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 
 	if f.stage != nil {
 		if *seedLedger != "" && len(f.stage.Artifacts) > 0 {
+			if err := verifyProvisioner(provisioner); err != nil {
+				fmt.Fprintln(stderr, "factory:", err)
+				return 1
+			}
 			if err := applySeedEntries(f.stage, provisioner.Entries(), stdout); err != nil {
 				fmt.Fprintln(stderr, "factory:", err)
 				return 1

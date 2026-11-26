@@ -61,14 +61,35 @@ type fakeBytes struct {
 	pullErr error
 	body    []byte
 	ext     string
+	// staged is the digest of the bytes the pull actually staged; blank means
+	// the registry served the bytes the manifest named.
+	staged string
 }
 
 func (f fakeBytes) ArtifactDigest(_, _, _, _ string) (string, error) { return f.digest, f.digErr }
-func (f fakeBytes) Pull(_, _, _, _ string) (io.ReadCloser, string, error) {
+func (f fakeBytes) Pull(_, _, _, _ string) (io.ReadCloser, string, string, error) {
 	if f.pullErr != nil {
-		return nil, "", f.pullErr
+		return nil, "", "", f.pullErr
 	}
-	return io.NopCloser(bytes.NewReader(f.body)), f.ext, nil
+	staged := f.staged
+	if staged == "" {
+		staged = f.digest
+	}
+	return io.NopCloser(bytes.NewReader(f.body)), f.ext, staged, nil
+}
+
+// The digest is read first and the bytes pulled after, so a registry that
+// re-points the tag in between would serve other bytes under the verified
+// digest: the pulled bytes must hash to the digest the signature vouches for.
+func TestCompareInstalledRefusesBytesThatAreNotTheVerifiedDigest(t *testing.T) {
+	ref, got := t.TempDir(), t.TempDir()
+	writeTree(t, ref)
+	writeTree(t, got)
+	swapped := fakeBytes{digest: "sha256:d", staged: "sha256:swapped", body: tarballOf(t, ref), ext: artifact.ExtTarGz}
+	tg := seedTarget{path: got, project: "a.org", version: "1.0"}
+	if err := compareInstalled(swapped, tg, "linux", "x86-64", "sha256:d"); err == nil || !strings.Contains(err.Error(), "pulled bytes") {
+		t.Errorf("a tag re-pointed between the digest read and the pull: %v", err)
+	}
 }
 
 func TestCompareInstalledReadsTheSignedArtifactAndComparesItsBytes(t *testing.T) {
@@ -182,7 +203,7 @@ func TestInstalledBytesFailsOnAnUnreachableRegistry(t *testing.T) {
 		t.Fatal("no registry was accepted")
 	}
 	c, _ := artifact.NewOCIClient("oci://127.0.0.1:1/seed")
-	if _, _, err := (ociBytes{c}).Pull("lz4.org", "1.10.0", "linux", "s390x"); err == nil {
+	if _, _, _, err := (ociBytes{c}).Pull("lz4.org", "1.10.0", "linux", "s390x"); err == nil {
 		t.Fatal("an unreachable registry was pulled")
 	}
 }
