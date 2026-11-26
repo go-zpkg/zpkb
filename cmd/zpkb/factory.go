@@ -488,6 +488,9 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		}
 		defer provisioner.Close()
 		runner.Provision = provisioner.Provision
+		runner.PickVersion = provisioner.Pick(runner.PickVersion)
+		runner.ResolveDep = provisioner.Pick(runner.ResolveDep)
+		runner.ToolInstallable = provisioner.Pick(runner.ToolInstallable)
 	}
 
 	if err := setCodec(*compress); err != nil {

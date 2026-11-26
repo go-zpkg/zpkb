@@ -34,11 +34,15 @@ import (
 // OCI-Subject echo so ORAS skips fallback-tag maintenance).
 type miniOCI struct {
 	srv *httptest.Server
+	// tags are the manifest references pushed by tag, in push order.
+	tags []string
 }
 
 func newMiniOCI() *miniOCI {
 	m := &miniOCI{}
+	tagsOf := map[string][]string{}  // repository -> tags pushed to it, served on tags/list
 	blobs := map[string]int{}        // digest -> size
+	blobData := map[string][]byte{}  // digest -> bytes, served on GET
 	manifests := map[string][]byte{} // tag or digest -> manifest/index body
 	m.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
@@ -52,6 +56,7 @@ func newMiniOCI() *miniOCI {
 			} else { // PUT: monolithic upload
 				body, _ := io.ReadAll(r.Body)
 				blobs[r.URL.Query().Get("digest")] = len(body)
+				blobData[r.URL.Query().Get("digest")] = body
 				w.Header().Set("Docker-Content-Digest", r.URL.Query().Get("digest"))
 				w.WriteHeader(201)
 			}
@@ -61,9 +66,20 @@ func newMiniOCI() *miniOCI {
 				w.Header().Set("Content-Length", strconv.Itoa(sz))
 				w.Header().Set("Docker-Content-Digest", dg)
 				w.WriteHeader(200)
+				if r.Method == "GET" {
+					_, _ = w.Write(blobData[dg])
+				}
 			} else {
 				w.WriteHeader(404)
 			}
+		case strings.HasSuffix(p, "/tags/list"):
+			repo := strings.TrimSuffix(strings.TrimPrefix(p, "/v2/"), "/tags/list")
+			names, ok := tagsOf[repo]
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": repo, "tags": names})
 		case strings.Contains(p, "/manifests/"):
 			ref := p[strings.LastIndex(p, "/")+1:]
 			switch r.Method {
@@ -79,6 +95,11 @@ func newMiniOCI() *miniOCI {
 				}
 				s := sha256.Sum256(body)
 				dg := "sha256:" + hex.EncodeToString(s[:])
+				if !strings.HasPrefix(ref, "sha256:") {
+					m.tags = append(m.tags, ref)
+					repo := strings.TrimPrefix(strings.SplitN(p, "/manifests/", 2)[0], "/v2/")
+					tagsOf[repo] = append(tagsOf[repo], ref)
+				}
 				manifests[ref] = body // by tag (or digest, if pushed by digest)
 				manifests[dg] = body  // always addressable by digest
 				w.Header().Set("Docker-Content-Digest", dg)

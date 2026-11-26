@@ -127,3 +127,62 @@ func TestEnvWithoutAndLimitWriter(t *testing.T) {
 		t.Fatal("past the bound must fail")
 	}
 }
+
+func TestASeedRefusesAnyUpstreamDist(t *testing.T) {
+	for _, up := range []string{"https://dist.pkgx.dev", "http://127.0.0.1:1", "oci://ghcr.io/go-pkgx/packages"} {
+		if err := checkSeedUpstream(up); err == nil || !strings.Contains(err.Error(), "unsigned upstream") {
+			t.Errorf("checkSeedUpstream(%q) = %v, want a refusal", up, err)
+		}
+	}
+	for _, ok := range []string{"", "none"} {
+		if err := checkSeedUpstream(ok); err != nil {
+			t.Errorf("checkSeedUpstream(%q) = %v", ok, err)
+		}
+	}
+	old := artifact.UpstreamDist
+	artifact.UpstreamDist = "https://dist.pkgx.dev"
+	defer func() { artifact.UpstreamDist = old }()
+	p, err := newSeedProvisioner(fakeZpkx(t, "exit 0\n"), artifact.SeedRegistry, nil)
+	if err == nil {
+		p.Close()
+		t.Fatal("a provisioner was made with dist.pkgx.dev as the upstream")
+	}
+}
+
+func TestPlanVersionsResolveFromThePinnedSeedRegistryOnly(t *testing.T) {
+	t.Setenv("ZPKG_VERIFY", "1")
+	old := artifact.UpstreamDist
+	artifact.UpstreamDist = ""
+	defer func() { artifact.UpstreamDist = old }()
+	p, err := newSeedProvisioner(fakeZpkx(t, "exit 0\n"), artifact.SeedRegistry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	before := artifact.DistBase
+	var during string
+	v, err := p.Pick(func(project, constraint string) (string, error) {
+		during = artifact.DistBase
+		return "1.2.3", nil
+	})("zlib.net", "*")
+	if err != nil || v != "1.2.3" {
+		t.Fatalf("Pick = %q %v", v, err)
+	}
+	if during != artifact.SeedRegistry {
+		t.Errorf("resolved against %q, want the seed registry %q", during, artifact.SeedRegistry)
+	}
+	if artifact.DistBase != before {
+		t.Errorf("DistBase not restored: %q", artifact.DistBase)
+	}
+	// A resolver error is passed through.
+	if _, err := p.Pick(func(string, string) (string, error) { return "x", os.ErrNotExist })("a", "*"); err == nil {
+		t.Error("a resolver error was swallowed")
+	}
+	// A registry that is not the pinned one is refused before anything resolves.
+	q, _ := newSeedProvisioner(fakeZpkx(t, "exit 0\n"), "oci://other.example/packages", nil)
+	defer q.Close()
+	called := false
+	if _, err := q.Pick(func(string, string) (string, error) { called = true; return "1", nil })("a", "*"); err == nil || called {
+		t.Errorf("a non-pinned seed registry resolved (err=%v, called=%v)", err, called)
+	}
+}

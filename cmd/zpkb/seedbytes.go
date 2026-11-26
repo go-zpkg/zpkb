@@ -41,6 +41,12 @@ var installedBytes = func(dist string, t seedTarget, osn, arch, digest string) e
 	if err != nil {
 		return err
 	}
+	// The signature was read under the tag the registry holds the version by
+	// (`1.0-h<hash>`), so the bytes are read under the same one: a bare
+	// directory name must not ask for a tag the registry does not have.
+	if t.version, err = resolveBuildTag(c, t.project, t.version, osn, arch); err != nil {
+		return err
+	}
 	return compareInstalled(ociBytes{c}, t, osn, arch, digest)
 }
 

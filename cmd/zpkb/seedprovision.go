@@ -29,6 +29,7 @@ type seedProvisioner struct {
 	from string // the seed registry, as $ZPKX_SEEDED names it
 	dir  string // private directory for per-call ledgers
 
+	pick    sync.Mutex // serialises the registry swap of inSeed
 	mu      sync.Mutex
 	entries []artifact.SeedEntry
 	seen    map[string]bool
@@ -39,13 +40,50 @@ func newSeedProvisioner(zpkx, from string, base []artifact.SeedEntry) (*seedProv
 	if from == "" {
 		return nil, errors.New("seed provisioning needs the seed registry ($ZPKX_SEEDED)")
 	}
+	if err := checkSeedUpstream(artifact.UpstreamDist); err != nil {
+		return nil, err
+	}
 	dir, err := os.MkdirTemp("", "zpkb-seed-provision-")
 	if err != nil {
 		return nil, err
 	}
+	// Plan-phase version resolution reads the seed registry's signed index
+	// (WithSeedSource insists on a ledger file being set; a listing installs
+	// nothing, so it stays empty).
+	artifact.SetSeedLedgerFile(filepath.Join(dir, "resolve-ledger"))
 	p := &seedProvisioner{zpkx: zpkx, from: from, dir: dir, seen: map[string]bool{}}
 	p.add(base)
 	return p, nil
+}
+
+// checkSeedUpstream refuses any upstream dist under a seed. The versions of a
+// seed pass come from the pinned, signed seed registry; an upstream dist
+// (dist.pkgx.dev, or any other) is an unsigned source the seed design forbids.
+func checkSeedUpstream(upstream string) error {
+	if upstream == "" || upstream == "none" {
+		return nil
+	}
+	return fmt.Errorf("a seed is in force and ZPKG_UPSTREAM_DIST=%s names an unsigned upstream: "+
+		"versions resolve from the pinned seed registry only", upstream)
+}
+
+// inSeed runs fn with the artifact package reading the seed registry, so a
+// version is resolved from the signed index and never from the factory's own
+// dist (which does not carry the seed's packages).
+func (p *seedProvisioner) inSeed(fn func() error) error {
+	p.pick.Lock()
+	defer p.pick.Unlock()
+	return artifact.WithSeedSource(p.from, fn)
+}
+
+// Pick wraps a version resolver so it answers from the seed registry.
+func (p *seedProvisioner) Pick(f func(project, constraint string) (string, error)) func(string, string) (string, error) {
+	return func(project, constraint string) (v string, err error) {
+		if e := p.inSeed(func() error { v, err = f(project, constraint); return err }); e != nil {
+			return "", e
+		}
+		return v, nil
+	}
 }
 
 func provisionKey(e artifact.SeedEntry) string {
