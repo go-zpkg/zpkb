@@ -269,7 +269,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("closed")
 // blocked on a full pipe.
 func TestProvisionerRefusesAnOversizedLedger(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://seed")
-	z := fakeZpkx(t, "head -c 17000000 /dev/zero | tr '\\0' 'x' >&3\n")
+	z := fakeZpkx(t, "dd if=/dev/zero bs=1048576 count=17 2>/dev/null | tr '\\0' 'x' >&3\n")
 	p, err := newSeedProvisioner(z, "oci://seed", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +454,7 @@ func TestProvisionerRefusals(t *testing.T) {
 		t.Fatalf("%q %v", env, err)
 	}
 	// An environment past the bound is refused.
-	big := fakeZpkx(t, "head -c 5000000 /dev/zero\n")
+	big := fakeZpkx(t, "dd if=/dev/zero bs=1000000 count=5 2>/dev/null\n")
 	p2, _ := newSeedProvisioner(big, "oci://seed", nil)
 	defer p2.Close()
 	if _, err := p2.Provision([]string{"a"}); err == nil {
