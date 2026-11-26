@@ -98,7 +98,7 @@ func TestSeedBuildEndToEndWithTheRealZpkxAndZpkb(t *testing.T) {
 		`mkdir -p "{{prefix}}/bin" && printf '#!/bin/sh\necho ok\n' > "{{prefix}}/bin/seedtiny" && chmod +x "{{prefix}}/bin/seedtiny"`)
 	// A recipe that asks zpkx for a package of its own, from inside the build.
 	// Under a seed that must be refused, and it must not take the first down.
-	e2eRecipe(t, pantry, e2eNested, url, `zpkx +gnu.org/make -- true`)
+	e2eRecipe(t, pantry, e2eNested, url, zpkx+` +gnu.org/make -- true`)
 
 	store := filepath.Join(work, "store")
 	ledger := filepath.Join(work, "seed-ledger.jsonl")
@@ -139,7 +139,13 @@ func TestSeedBuildEndToEndWithTheRealZpkxAndZpkb(t *testing.T) {
 	}
 	detail, _ := os.ReadFile(filepath.Join(work, "failures-detail.txt"))
 	t.Logf("factory stdout:\n%s\nstderr:\n%s\nfailures:\n%s", stdout, stderr, detail)
-	for _, want := range []string{e2eProject, "zlib.net", strings.TrimPrefix(digest, "sha256:")} {
+	// The factory provisioned the closures of its recipes into the same ledger,
+	// so the digest the plan carries is the ledger's as it stands now.
+	final, stderr2, err := e2eRun(t, base, zpkx, "--seed-digest", ledger)
+	if err != nil || !strings.HasPrefix(strings.TrimSpace(final), "sha256:") {
+		t.Fatalf("zpkx --seed-digest after the factory = %q, %v\n%s", final, err, stderr2)
+	}
+	for _, want := range []string{e2eProject, "zlib.net", strings.TrimPrefix(strings.TrimSpace(final), "sha256:")} {
 		if !strings.Contains(string(plan), want) {
 			t.Errorf("the stage plan does not mention %q:\n%s", want, plan)
 		}
@@ -148,7 +154,7 @@ func TestSeedBuildEndToEndWithTheRealZpkxAndZpkb(t *testing.T) {
 	if strings.Contains(string(plan), e2eNested) {
 		t.Errorf("a recipe that installed a package under a seed was staged:\n%s", plan)
 	}
-	if !strings.Contains(string(detail), e2eNested) {
-		t.Errorf("the nested package request is not among the failures:\n%s", detail)
+	if !strings.Contains(string(detail), e2eNested) || !strings.Contains(string(detail), "a seed is in force") {
+		t.Errorf("the nested package request is not among the failures, refused for the seed:\n%s", detail)
 	}
 }
