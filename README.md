@@ -250,7 +250,7 @@ zpkb builder --seed-from oci://ghcr.io/go-pkgx/packages --seed-ledger seed.jsonl
 - `builder --seed-from` installs the rootfs from the seed (signatures verified, HTTP and unverified refused); it refuses `--dist` beside it, which would replace the seed as the source.
 - go-pkgx stays refused as a dependency source and as a publish target.
 - `origin --seeded` compares the installed tree with the artifact the signature vouches for: the pulled bytes must hash to the signed digest (a registry that re-points the tag between the digest read and the pull is refused), and every file and directory must match in kind, permission, setuid, setgid and sticky bits, content and link target.
-- The provisioner's per-call ledgers are refused when they exist before their call, and the plan-phase ledger must still be empty when the seed is signed. They live in a private 0700 temporary of the factory's user, so code running as that same user or as root while a build runs is a limit of that directory, not something these checks remove.
+- The provisioner's per-call ledger is a pipe handed to zpkx as an inherited descriptor, not a file on disk: nothing is left in a directory to be edited between zpkx's write and the factory's read, and a process that inherits the descriptor can only append. The plan-phase ledger must still be empty when the seed is signed. A process of the factory's own user that already holds the descriptor, or root, is a limit this does not remove. Where the platform cannot pass a descriptor, the provisioner refuses to run.
 
 ## Pinning every artifact a build needs: `sources`
 

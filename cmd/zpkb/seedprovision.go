@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-zpkg/artifact"
 )
@@ -18,18 +21,30 @@ import (
 // maxProvisionEnv bounds the environment text one closure may produce.
 const maxProvisionEnv = 4 << 20
 
+// ledgerFD is the path a child opens to reach the ledger pipe passed as its
+// first extra descriptor.
+const ledgerFD = "/dev/fd/3"
+
+// Seams, so the two ways a pipe can be unavailable are testable.
+var (
+	seedPipe = seedPipeSupported
+	newPipe  = os.Pipe
+)
+
 // seedProvisioner composes the build environment of a seeded build in the
 // FACTORY, so the generated script never has to ask zpkx for packages (zpkx
 // refuses that under a seed, by design). Every closure is installed by a zpkx
 // started here with the seed flags, so everything it fetches is verified and
 // recorded in a ledger the factory owns; the entries are merged into the set the
-// plan signs. The ledger a zpkx writes is private to one call and read back
-// here. LIMIT: the directory is a 0700 temporary of the factory's user, so it
-// keeps out a recipe running as another user and out of a chroot that does not
-// share the factory's temp; code running as the SAME user (or root) concurrently
-// could still write there. What is checked about that: a per-call ledger must not
-// exist before its call, and the plan-phase ledger must still be empty (Verify)
-// when the entries are signed.
+// plan signs. The ledger a zpkx writes is a pipe private to one call, drained
+// here: no file exists for another process to rewrite between zpkx's write and
+// the read-back, and what a pipe holds can only be appended to. LIMIT: a process
+// that inherited the pipe (zpkx replaces itself with the build command) can still
+// append a line while the call runs; an appended line can only add an entry to
+// the ledger, never alter or remove one, and a line that is not an entry is
+// refused. The plan-phase ledger, a file the artifact package writes in the
+// factory's 0700 temporary, must still be empty (Verify) when the entries are
+// signed.
 type seedProvisioner struct {
 	zpkx string
 	from string // the seed registry, as $ZPKX_SEEDED names it
@@ -144,16 +159,19 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls++
-	ledger := filepath.Join(p.dir, fmt.Sprintf("ledger-%d", p.calls))
-	// Only "does not exist" is absence: any other answer (an unreadable or
-	// replaced directory) is a ledger path this process cannot vouch for.
-	if _, err := os.Lstat(ledger); !errors.Is(err, fs.ErrNotExist) {
-		if err == nil {
-			return "", fmt.Errorf("the ledger %s already exists before its call: refusing a file this process did not create", ledger)
-		}
-		return "", fmt.Errorf("cannot tell whether the ledger %s exists before its call: %w", ledger, err)
+	if err := seedPipe(); err != nil {
+		return "", err
 	}
-	args := []string{"--seed-from", p.from, "--seed-ledger", ledger}
+	// The ledger is a pipe, not a file: there is no path in any directory for
+	// code of the same user to rewrite between zpkx's write and the read-back,
+	// and what a pipe holds can only be appended to, never edited or removed. The
+	// child opens it as /dev/fd/3.
+	pr, pw, err := newPipe()
+	if err != nil {
+		return "", err
+	}
+	defer pr.Close()
+	args := []string{"--seed-from", p.from, "--seed-ledger", ledgerFD}
 	for _, s := range specs {
 		args = append(args, "+"+s)
 	}
@@ -163,19 +181,91 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	cmd.Stdout = &limitWriter{w: &out, n: maxProvisionEnv}
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = nil
-	if err := cmd.Run(); err != nil {
+	cmd.ExtraFiles = []*os.File{pw}
+	got := make(chan ledgerRead, 1)
+	go func() { b, err := drainLedger(pr); got <- ledgerRead{b, err} }()
+	err = cmd.Run()
+	pw.Close()
+	// A descendant may still hold the write end: what the call wrote is already
+	// in the pipe, so stop reading after a short grace instead of waiting for EOF.
+	pr.SetReadDeadline(time.Now().Add(drainGrace))
+	l := <-got
+	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(ledger); err == nil {
-		es, err := artifact.ReadSeedLedger(ledger)
-		if err != nil {
-			return "", err
-		}
-		p.add(es)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return "", fmt.Errorf("cannot read the ledger %s the call wrote: %w", ledger, err)
+	if l.err != nil {
+		return "", l.err
 	}
+	es, err := parseSeedLedger(l.b)
+	if err != nil {
+		return "", err
+	}
+	p.add(es)
 	return out.String(), nil
+}
+
+// drainGrace is how long the read of a call's ledger goes on after the call
+// ended, for a descendant that kept the pipe open.
+const drainGrace = 200 * time.Millisecond
+
+type ledgerRead struct {
+	b   []byte
+	err error
+}
+
+// drainLedger reads the pipe until EOF or its deadline. It keeps reading past
+// the bound (and drops it) so a writer is never blocked on a full pipe.
+func drainLedger(r io.Reader) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, artifact.MaxSeedLedgerBytes+1))
+	if err == nil && len(b) > artifact.MaxSeedLedgerBytes {
+		_, err = io.Copy(io.Discard, r)
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			err = nil
+		}
+		return nil, errors.Join(err, fmt.Errorf("seed ledger: larger than %d bytes", artifact.MaxSeedLedgerBytes))
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		err = nil
+	}
+	return b, err
+}
+
+// parseSeedLedger is artifact.ReadSeedLedger over bytes already read: a line
+// that is not an entry is an error, never skipped, and the entries come back
+// in the same canonical order.
+func parseSeedLedger(b []byte) ([]artifact.SeedEntry, error) {
+	seen := map[string]bool{}
+	var out []artifact.SeedEntry
+	for i, line := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var e artifact.SeedEntry
+		dec := json.NewDecoder(strings.NewReader(line))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&e); err != nil {
+			return nil, fmt.Errorf("seed ledger line %d: %w", i+1, err)
+		}
+		if e.Project == "" || e.Version == "" || e.Digest == "" {
+			return nil, fmt.Errorf("seed ledger line %d: an entry names a project, a version and a digest", i+1)
+		}
+		sort.Strings(e.Signers)
+		if k := provisionKey(e); !seen[k] {
+			seen[k] = true
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Project != b.Project {
+			return a.Project < b.Project
+		}
+		if a.Version != b.Version {
+			return a.Version < b.Version
+		}
+		return a.Digest < b.Digest
+	})
+	return out, nil
 }
 
 // envWithout drops every NAME=... entry of env.

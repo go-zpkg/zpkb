@@ -3,10 +3,12 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-zpkg/artifact"
 )
@@ -36,12 +38,6 @@ func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
 	defer p.Close()
 	if err := p.Verify(); err != nil {
 		t.Fatalf("a fresh provisioner: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(p.dir, "ledger-1"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("a ledger planted before its call: %v", err)
 	}
 	resolve := filepath.Join(p.dir, "resolve-ledger")
 	if err := os.WriteFile(resolve, nil, 0o600); err != nil {
@@ -76,36 +72,155 @@ func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
 	}
 }
 
-// Only "does not exist" is absence. A directory that cannot be looked into
-// (here: it is a file) is not a ledger path to run a call against.
-func TestProvisionerRefusesALedgerPathItCannotLookUp(t *testing.T) {
-	ran := filepath.Join(t.TempDir(), "ran")
-	z := fakeZpkx(t, ": > "+ran+"\nexit 0\n")
-	dir := filepath.Join(t.TempDir(), "f")
-	if err := os.WriteFile(dir, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := &seedProvisioner{zpkx: z, from: "oci://seed", dir: dir, seen: map[string]bool{}}
-	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "cannot tell") {
-		t.Errorf("an unreadable ledger path: %v", err)
-	}
-	if _, err := os.Stat(ran); err == nil {
-		t.Error("zpkx ran against a ledger path that could not be looked up")
-	}
-}
+const entryLine = `{"project":"p","version":"1.0.0","digest":"sha256:d","signers":[],"keys":[],"source":"s"}`
 
-// The directory is swapped for a file while the call runs: the ledger it wrote
-// cannot be read back, which is not the same as the call having written none.
-func TestProvisionerRefusesALedgerItCannotReadBack(t *testing.T) {
-	z := fakeZpkx(t, "d=$(dirname \"$4\"); rm -rf \"$d\"; : > \"$d\"\nexit 0\n")
+// The window between zpkx's write and the read-back: a process of the same user
+// that tries to edit the ledger in it finds no file to edit (the ledger is a
+// pipe, there is nothing in the factory's directory), and an attempt to wipe it
+// through the descriptor it inherited does not remove what was written.
+func TestProvisionerLedgerHasNoFileToEditAndCannotBeWiped(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	var p *seedProvisioner
+	dirOf := filepath.Join(t.TempDir(), "dir")
+	z := fakeZpkx(t, "printf '%s\\n' '"+entryLine+"' >> \"$4\"\n"+
+		": > \"$4\"\n"+ // a recipe truncating the ledger
+		"D=$(cat '"+dirOf+"')\n"+
+		"for f in \"$D\"/*; do case \"$f\" in */resolve-ledger) ;; *) [ -e \"$f\" ] && exit 5;; esac; done\nexit 0\n")
 	p, err := newSeedProvisioner(z, "oci://seed", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "cannot read the ledger") {
-		t.Errorf("a ledger behind a replaced directory: %v", err)
+	if err := os.WriteFile(dirOf, []byte(p.dir), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Fatalf("a file appeared in the directory, or the call failed: %v", err)
+	}
+	if es := p.Entries(); len(es) != 1 || es[0].Project != "p" {
+		t.Errorf("the entry written before the wipe attempt was lost: %+v", es)
+	}
+}
+
+// A descendant that keeps the pipe open after the call ended does not hang the
+// factory.
+func TestProvisionerDoesNotWaitForADescendantHoldingTheLedger(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	z := fakeZpkx(t, "printf '%s\\n' '"+entryLine+"' >> \"$4\"\n(sleep 3 >/dev/null 2>&1 &)\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	start := time.Now()
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Error("the read waited for a descendant that held the pipe")
+	}
+	if len(p.Entries()) != 1 {
+		t.Errorf("entries = %+v", p.Entries())
+	}
+}
+
+// A call that writes more than a ledger may hold is refused, and is not left
+// blocked on a full pipe.
+func TestProvisionerRefusesAnOversizedLedger(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	z := fakeZpkx(t, "head -c 17000000 /dev/zero | tr '\\0' 'x' >> \"$4\"\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("an oversized ledger: %v", err)
+	}
+}
+
+type failingReader struct {
+	first []byte
+	end   error // what the read ends with; "boom" when nil
+}
+
+func (f *failingReader) Read(b []byte) (int, error) {
+	if len(f.first) > 0 {
+		n := copy(b, f.first)
+		f.first = f.first[n:]
+		return n, nil
+	}
+	if f.end != nil {
+		return 0, f.end
+	}
+	return 0, errors.New("boom")
+}
+
+func TestDrainLedgerReportsAReadFailure(t *testing.T) {
+	if _, err := drainLedger(&failingReader{first: []byte("x")}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("a failing pipe: %v", err)
+	}
+	big := make([]byte, artifact.MaxSeedLedgerBytes+10)
+	_, err := drainLedger(&failingReader{first: big})
+	if err == nil || !strings.Contains(err.Error(), "larger than") || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("an oversized ledger behind a failing pipe: %v", err)
+	}
+	r := deadlineReader{}
+	if b, err := drainLedger(r); err != nil || len(b) != 0 {
+		t.Errorf("a deadline is the end of the read, not a failure: %q, %v", b, err)
+	}
+	if _, err := drainLedger(&failingReader{first: big, end: os.ErrDeadlineExceeded}); err == nil || strings.Contains(err.Error(), "deadline") {
+		t.Errorf("a deadline after an oversized ledger: %v", err)
+	}
+}
+
+type deadlineReader struct{}
+
+func (deadlineReader) Read([]byte) (int, error) { return 0, os.ErrDeadlineExceeded }
+
+func TestProvisionerRefusesWithoutAPipe(t *testing.T) {
+	z := fakeZpkx(t, ": > \"$HOME/ran-never\"\n")
+	p := &seedProvisioner{zpkx: z, from: "oci://seed", seen: map[string]bool{}}
+	defer func(a func() error, b func() (*os.File, *os.File, error)) { seedPipe, newPipe = a, b }(seedPipe, newPipe)
+	seedPipe = func() error { return errors.New("no /dev/fd") }
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "no /dev/fd") {
+		t.Errorf("a system without /dev/fd: %v", err)
+	}
+	seedPipe = func() error { return nil }
+	newPipe = func() (*os.File, *os.File, error) { return nil, nil, errors.New("no pipes") }
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "no pipes") {
+		t.Errorf("no pipe could be made: %v", err)
+	}
+}
+
+func TestParseSeedLedger(t *testing.T) {
+	ord := `{"project":"p","version":"%s","digest":"%s"}` + "\n"
+	in := strings.NewReplacer("%s", "X").Replace("") +
+		strings.Replace(strings.Replace(ord, "%s", "2", 1), "%s", "d1", 1) +
+		strings.Replace(strings.Replace(ord, "%s", "1", 1), "%s", "d2", 1) +
+		strings.Replace(strings.Replace(ord, "%s", "1", 1), "%s", "d1", 1)
+	if es, err := parseSeedLedger([]byte(in)); err != nil || len(es) != 3 ||
+		es[0].Version != "1" || es[0].Digest != "d1" || es[1].Digest != "d2" || es[2].Version != "2" {
+		t.Errorf("ordered by project, version, digest: %+v, %v", es, err)
+	}
+	two := entryLine + "\n\n" + strings.Replace(entryLine, `"p"`, `"a"`, 1) + "\n" + entryLine + "\n"
+	es, err := parseSeedLedger([]byte(two))
+	if err != nil || len(es) != 2 || es[0].Project != "a" || es[1].Project != "p" {
+		t.Errorf("sorted and deduplicated: %+v, %v", es, err)
+	}
+	if es, err := parseSeedLedger(nil); err != nil || len(es) != 0 {
+		t.Errorf("an empty ledger: %+v, %v", es, err)
+	}
+	for name, in := range map[string]string{
+		"not json":      "notjson\n",
+		"unknown field": `{"project":"p","version":"1","digest":"d","extra":1}` + "\n",
+		"no digest":     `{"project":"p","version":"1"}` + "\n",
+		"no project":    `{"version":"1","digest":"d"}` + "\n",
+		"no version":    `{"project":"p","digest":"d"}` + "\n",
+	} {
+		if _, err := parseSeedLedger([]byte(in)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }
 
