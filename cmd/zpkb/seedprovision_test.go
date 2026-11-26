@@ -23,6 +23,59 @@ func fakeZpkx(t *testing.T, body string) string {
 	return p
 }
 
+// The per-call ledgers live in a directory recipe code of the same user could
+// write to while a build runs. A ledger that exists before its zpkx call is
+// refused, and the plan-phase ledger, which must stay empty (a listing installs
+// nothing), is asserted empty before the entries are signed.
+func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	p, err := newSeedProvisioner(fakeZpkx(t, "exit 0\n"), "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if err := p.Verify(); err != nil {
+		t.Fatalf("a fresh provisioner: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(p.dir, "ledger-1"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("a ledger planted before its call: %v", err)
+	}
+	resolve := filepath.Join(p.dir, "resolve-ledger")
+	if err := os.WriteFile(resolve, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Verify(); err != nil {
+		t.Errorf("an empty plan-phase ledger: %v", err)
+	}
+	if err := os.WriteFile(resolve, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Verify(); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Errorf("a plan-phase ledger with entries: %v", err)
+	}
+	if err := os.Remove(resolve); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(resolve, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Verify(); err == nil {
+		t.Error("a plan-phase ledger that is a directory was accepted")
+	}
+	// A private directory that stopped being one: the ledger cannot be read, which
+	// is not the same as it being absent.
+	bad := &seedProvisioner{dir: filepath.Join(t.TempDir(), "f")}
+	if err := os.WriteFile(bad.dir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.Verify(); err == nil || strings.Contains(err.Error(), "not empty") {
+		t.Errorf("an unreadable plan-phase ledger: %v", err)
+	}
+}
+
 func TestProvisionerRecordsWhatEachClosureInstalled(t *testing.T) {
 	// $5 is the ledger path: arguments are --seed-from X --seed-ledger L +spec...
 	z := fakeZpkx(t, `

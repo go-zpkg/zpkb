@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,12 @@ const maxProvisionEnv = 4 << 20
 // started here with the seed flags, so everything it fetches is verified and
 // recorded in a ledger the factory owns; the entries are merged into the set the
 // plan signs. The ledger a zpkx writes is private to one call and read back
-// here, so a recipe cannot add to, or remove from, what is signed.
+// here. LIMIT: the directory is a 0700 temporary of the factory's user, so it
+// keeps out a recipe running as another user and out of a chroot that does not
+// share the factory's temp; code running as the SAME user (or root) concurrently
+// could still write there. What is checked about that: a per-call ledger must not
+// exist before its call, and the plan-phase ledger must still be empty (Verify)
+// when the entries are signed.
 type seedProvisioner struct {
 	zpkx string
 	from string // the seed registry, as $ZPKX_SEEDED names it
@@ -107,6 +113,26 @@ func (p *seedProvisioner) Entries() []artifact.SeedEntry {
 	return append([]artifact.SeedEntry(nil), p.entries...)
 }
 
+// verifyProvisioner is a seam: the real check needs something to have written
+// into the provisioner's private directory while the factory runs.
+var verifyProvisioner = (*seedProvisioner).Verify
+
+// Verify asserts the plan-phase ledger is still empty: a version listing
+// installs nothing, so entries in it mean something other than this process
+// wrote there. Called before the entries are signed.
+func (p *seedProvisioner) Verify() error {
+	st, err := os.Lstat(filepath.Join(p.dir, "resolve-ledger"))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case !st.Mode().IsRegular() || st.Size() != 0:
+		return errors.New("the plan-phase seed ledger is not empty: something other than a version listing wrote to the provisioner's directory")
+	}
+	return nil
+}
+
 // Close removes the private ledgers.
 func (p *seedProvisioner) Close() error { return os.RemoveAll(p.dir) }
 
@@ -119,6 +145,9 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	defer p.mu.Unlock()
 	p.calls++
 	ledger := filepath.Join(p.dir, fmt.Sprintf("ledger-%d", p.calls))
+	if _, err := os.Lstat(ledger); err == nil {
+		return "", fmt.Errorf("the ledger %s already exists before its call: refusing a file this process did not create", ledger)
+	}
 	args := []string{"--seed-from", p.from, "--seed-ledger", ledger}
 	for _, s := range specs {
 		args = append(args, "+"+s)

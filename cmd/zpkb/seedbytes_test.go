@@ -49,6 +49,10 @@ func TestSameTreeComparesBytesNotNames(t *testing.T) {
 	mutate := map[string]func(){
 		"changed content": func() { os.WriteFile(filepath.Join(got, "share", "doc"), []byte("docX"), 0o644) },
 		"changed mode":    func() { os.Chmod(filepath.Join(got, "bin", "tool"), 0o700) },
+		"setuid added":    func() { os.Chmod(filepath.Join(got, "bin", "tool"), 0o755|os.ModeSetuid) },
+		"setgid added":    func() { os.Chmod(filepath.Join(got, "bin", "tool"), 0o755|os.ModeSetgid) },
+		"sticky dir":      func() { os.Chmod(filepath.Join(got, "share"), 0o755|os.ModeSticky) },
+		"directory mode":  func() { os.Chmod(filepath.Join(got, "share"), 0o700) },
 		"extra file":      func() { os.WriteFile(filepath.Join(got, "bin", "extra"), nil, 0o644) },
 		"missing file":    func() { os.Remove(filepath.Join(got, "share", "doc")) },
 		"retargeted link": func() {
