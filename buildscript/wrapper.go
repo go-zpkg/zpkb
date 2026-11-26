@@ -45,8 +45,14 @@ type WrapOptions struct {
 	// reason `target.go` gives about `BREWKIT_TARGET`: two spellings of one
 	// thing make every document explain both forever, and a caller setting the
 	// old one would be silently ignored by a struct literal.
-	ShimPath    string // dir prepended to PATH for the build shims (optional)
-	ZpkxBin     string // path to the zpkx binary (for the deps eval + $ZPKGX)
+	ShimPath string // dir prepended to PATH for the build shims (optional)
+	ZpkxBin  string // path to the zpkx binary (for the deps eval + $ZPKGX)
+	// Provisioned says ToolEnv and DepEnv are the composed environments of the two
+	// closures, already installed by the caller: the script evaluates them and runs
+	// no zpkx for its dependencies. Set under a seed pass.
+	Provisioned bool
+	ToolEnv     string
+	DepEnv      string
 	BashPath    string // shebang interpreter (default /bin/bash)
 	HasCompiler bool   // a compiler (llvm.org / gnu.org/gcc) is already a dep
 	// Bootstrap takes the compiler from the HOST instead of adding the llvm.org
@@ -139,8 +145,16 @@ func Wrap(o WrapOptions) string {
 	}
 	// Tools first: each variable zpkx writes PREPENDS, so whatever is evaluated
 	// last comes first on the path. The link closure must win.
-	writeDepEval(&b, zpkxBin, o.toolPlus(), "tool", 1)
-	writeDepEval(&b, zpkxBin, o.depPlus(), "dependency", 1)
+	if o.Provisioned {
+		// A seed pass: the factory installed both closures BEFORE this script and
+		// hands over the environment they compose. The script calls no zpkx for it,
+		// because a zpkx below a seed refuses every package request.
+		writeEnvLiteral(&b, o.ToolEnv)
+		writeEnvLiteral(&b, o.DepEnv)
+	} else {
+		writeDepEval(&b, zpkxBin, o.toolPlus(), "tool", 1)
+		writeDepEval(&b, zpkxBin, o.depPlus(), "dependency", 1)
+	}
 	if o.ShimPath != "" {
 		fmt.Fprintf(&b, "export PATH=\"%s:$PATH\"\n", o.ShimPath)
 	}
@@ -234,6 +248,34 @@ func writeDepEval(b *strings.Builder, zpkx, plus, what string, code int) {
 	b.WriteString("eval \"$__bk_deps_env\"\n")
 	b.WriteString("unset __bk_deps_env\n")
 	b.WriteString("set +a\n")
+}
+
+// writeEnvLiteral emits an environment the factory already composed, as one
+// single-quoted word evaluated in place. An empty environment writes nothing.
+func writeEnvLiteral(b *strings.Builder, env string) {
+	if env == "" {
+		return
+	}
+	b.WriteString("set -a\n")
+	b.WriteString("eval '" + strings.ReplaceAll(env, "'", `'\''`) + "'\n")
+	b.WriteString("set +a\n")
+}
+
+// ToolSpecs and DepSpecs are the package specs (`name@constraint`, no `+`) of the
+// two closures the script would hand to zpkx; a factory that provisions them
+// itself asks for exactly these, so the two never drift.
+func (o WrapOptions) ToolSpecs() []string { return specsOf(o.toolPlus()) }
+
+// DepSpecs: see ToolSpecs.
+func (o WrapOptions) DepSpecs() []string { return specsOf(o.depPlus()) }
+
+// specsOf turns a rendered `"+a" "+b"` list back into specs.
+func specsOf(plus string) []string {
+	var out []string
+	for _, f := range strings.Fields(plus) {
+		out = append(out, strings.TrimPrefix(strings.Trim(f, `"`), "+"))
+	}
+	return out
 }
 
 // toolPlus is the `+spec` list for the tool closure. It gets none of the

@@ -1041,6 +1041,10 @@ var PassThroughEnv = []string{
 	"LANG", "LOGNAME", "USER", "TERM", "ZPKG_RECIPE_DIR", "ZPKG_RECIPES_PATH",
 	"ZPKG_DIST", "ZPKG_CACHE", "ZPKG_RECIPES", "ZPKG_RECIPES_OVERLAY", "ZPKG_VERIFY",
 	"LD_LIBRARY_PATH", "QEMU_RESERVED_VA",
+	// ZPKX_SEEDED is the marker zpkx sets under a seed pass. A recipe must see it:
+	// the zpkx a script calls refuses a seed flag while it is set, so a seed pass
+	// stays the one the factory started and recorded.
+	"ZPKX_SEEDED",
 }
 
 // autotools file tiers, oldest → newest, so outputs end up newer than inputs.

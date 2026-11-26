@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -777,6 +778,12 @@ func buildParams(project, version, osn, arch string, o provOrigin) map[string]st
 	if o.Dist != "" {
 		p["inputs-from"] = o.Dist
 	}
+	if o.Seed != "" {
+		p["seed"] = o.Seed
+		if s := seedSourceOf(o.SeedEntries); s != "" {
+			p["seed-source"] = s
+		}
+	}
 	return p
 }
 
@@ -825,6 +832,45 @@ type provOrigin struct {
 	// distinguishes an artifact built against the seed's loopback registry from
 	// one built against ghcr, which no digest or signature can show.
 	Dist string
+	// Seed is the sha256 (hex) of the seed ledger when another registry's
+	// artifacts were this build's ENVIRONMENT (artifact.WithSeedSource), "" when
+	// none were. It is written into the provenance AND the signed claim: a seed
+	// is named, never hidden, and a seed-built artifact is never promotable.
+	Seed string
+	// SeedEntries are the seed artifacts themselves, written as materials with
+	// their digests and as the `seed-source` parameter.
+	SeedEntries []artifact.SeedEntry
+}
+
+// seedMaterials lists the seed artifacts as provenance materials, each with the
+// digest the seed was verified at. A seed artifact is an input of the build, so
+// it is a material; naming it by digest is what lets a reader find which bytes
+// the compiler came from.
+func seedMaterials(es []artifact.SeedEntry) []provenance.Material {
+	out := make([]provenance.Material, 0, len(es))
+	for _, e := range es {
+		out = append(out, provenance.Material{
+			URI:    purlFor(e.Project, e.Version),
+			SHA256: strings.TrimPrefix(e.Digest, "sha256:"),
+		})
+	}
+	return out
+}
+
+// seedSourceOf is the registry the seed came from, as the ledger records it.
+// Entries from several sources are joined, sorted and de-duplicated, so the
+// parameter is a function of the set.
+func seedSourceOf(es []artifact.SeedEntry) string {
+	seen := map[string]bool{}
+	var srcs []string
+	for _, e := range es {
+		if e.Source != "" && !seen[e.Source] {
+			seen[e.Source] = true
+			srcs = append(srcs, e.Source)
+		}
+	}
+	sort.Strings(srcs)
+	return strings.Join(srcs, " ")
 }
 
 // boolParam renders a known boolean the way buildParams records it.
@@ -865,7 +911,7 @@ func buildReferrers(project, version, osn, arch string, tarball []byte, src buil
 		StartedOn:  now,
 		FinishedOn: now,
 		Params:     buildParams(project, version, osn, arch, origin),
-		Materials:  append(materialsOf(src), environmentMaterials(env)...),
+		Materials:  append(append(materialsOf(src), environmentMaterials(env)...), seedMaterials(origin.SeedEntries)...),
 	}
 	pr, err := provJSON(stmt)
 	if err != nil {
@@ -883,6 +929,7 @@ func buildReferrers(project, version, osn, arch string, tarball []byte, src buil
 		payload, err := originSigning(purl, "sha256:"+dg, originClaims{
 			Provenance: hex.EncodeToString(psum[:]),
 			Sovereign:  origin.Sovereign,
+			Seed:       origin.Seed,
 		})
 		if err != nil {
 			return nil, err

@@ -203,6 +203,8 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	testTimeout := fs.Duration("test-timeout", 5*time.Minute, "give up on one package's test after this long")
 	testOnly := fs.Bool("test-only", envBool("TEST_ONLY"), "build NOTHING: run the recorded test for each project's already-published version. What the factory publishes it tests once, and never again — this is how an artifact that stopped working gets noticed")
 	sourceMirror := fs.String("source-mirror", envOr("SOURCE_MIRROR", ""), "keep every source archive a build downloads in this registry, addressed by its sha256 (e.g. oci://ghcr.io/go-zpkg). 57% of this pantry builds from tarballs GitHub GENERATES on request rather than stores, so for those it is the first stored artefact they have ever had")
+	seedLedger := fs.String("seed-ledger", "", "the ledger file `zpkx --seed-from` writes. Needs --stage-only and a seed in force ($ZPKX_SEEDED, a marker zpkx sets): the ledger is carried into the stage plan, and `zpkb publish-stage` names the seed in each artifact's provenance and signed claim. A seed in force without this flag is refused, so a seed-built artifact is never signed unmarked; such an artifact is never promoted")
+	seedLedgerSHA := fs.String("seed-ledger-sha256", "", "the digest (sha256:<hex>, canonical form) the build's outer script recorded for the seed ledger before any recipe ran; a ledger that does not match is refused. Needs --seed-ledger")
 	sourcePinStrict := fs.Bool("source-pin-strict", false, "fail a fetch when the mirror cannot be ASKED what a URL served before, rather than warning and continuing. A mismatch always fails; this is only about an unreadable store, and the two are different facts -- treating them alike is how trust-on-first-use becomes trust-every-time")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -210,6 +212,24 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	if *platform == "" {
 		fmt.Fprintln(stderr, "usage: zpkb factory --platform os/arch [--recipes \"p1 p2\"] [--pantry dir] [--to oci://…]")
 		return 2
+	}
+	if err := checkSeedFlags(*seedLedger, os.Getenv("ZPKX_SEEDED"), *stageOnly, *mirrorFrom); err != nil {
+		fmt.Fprintln(stderr, "factory:", err)
+		return 2
+	}
+	// F2: the ledger is read NOW, before a recipe has run, and that reading is
+	// what is signed; a digest recorded outside the build must match it.
+	var seedSnap []artifact.SeedEntry
+	if *seedLedger != "" {
+		if *seedLedgerSHA == "" {
+			fmt.Fprintln(stderr, "factory: --seed-ledger-sha256 is required with --seed-ledger: the digest the outer script recorded before any recipe ran is what the ledger is checked against")
+			return 2
+		}
+		var err error
+		if seedSnap, err = snapshotSeed(*seedLedger, strings.TrimPrefix(*seedLedgerSHA, "sha256:")); err != nil {
+			fmt.Fprintln(stderr, "factory:", err)
+			return 2
+		}
 	}
 	// ⛔ A GATE THAT GUARDS NOTHING IS WORSE THAN NO GATE, because the operator
 	// believes it ran. --require-origin reads the SOURCE artifact's provenance,
@@ -457,6 +477,21 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	//   /bin/sh: xmalloc: hashlib.c:72: cannot allocate 8192 bytes
 	// which reads like a broken recipe and is not one.
 	runner.Concurrency = *jobs
+	var provisioner *seedProvisioner
+	if *seedLedger != "" {
+		// Under a seed the script cannot ask zpkx for packages (zpkx refuses it),
+		// so the factory installs each closure from the seed itself, recorded.
+		var perr error
+		if provisioner, perr = newSeedProvisioner(zpkxBin, os.Getenv("ZPKX_SEEDED"), seedSnap); perr != nil {
+			fmt.Fprintln(stderr, "factory:", perr)
+			return 1
+		}
+		defer provisioner.Close()
+		runner.Provision = provisioner.Provision
+		runner.PickVersion = provisioner.Pick(runner.PickVersion)
+		runner.ResolveDep = provisioner.Pick(runner.ResolveDep)
+		runner.ToolInstallable = provisioner.Pick(runner.ToolInstallable)
+	}
 
 	if err := setCodec(*compress); err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -465,7 +500,8 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 
 	f := &factory{
 		runner: runner, tgt: tgt, host: target.Host(),
-		osn: osn, arch: arch, platform: *platform,
+		seeded: *seedLedger != "",
+		osn:    osn, arch: arch, platform: *platform,
 		dist: *to, artifacts: *artifacts, glibc: *glibc,
 		force: *force, key: kp, when: factoryTime(),
 		mirror:           strings.TrimRight(*mirrorFrom, "/"),
@@ -500,6 +536,10 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 		plan, perr := loadStagePlan(*artifacts, *to, *platform, f.when)
 		if perr != nil {
 			fmt.Fprintln(stderr, "factory:", perr)
+			return 1
+		}
+		if err := checkPlanSeed(plan, *seedLedger != ""); err != nil {
+			fmt.Fprintln(stderr, "factory:", err)
 			return 1
 		}
 		f.stage = plan
@@ -565,6 +605,12 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if f.stage != nil {
+		if *seedLedger != "" && len(f.stage.Artifacts) > 0 {
+			if err := applySeedEntries(f.stage, provisioner.Entries(), stdout); err != nil {
+				fmt.Fprintln(stderr, "factory:", err)
+				return 1
+			}
+		}
 		if err := writeStagePlan(*artifacts, f.stage); err != nil {
 			fmt.Fprintln(stderr, "factory:", err)
 			return 1
@@ -608,6 +654,7 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 // factory carries one run's configuration and tallies.
 type factory struct {
 	runner    *build.Runner
+	seeded    bool // --seed-ledger: this pass builds from a seed
 	tgt       target.Target
 	host      target.Target
 	osn       string
@@ -953,6 +1000,12 @@ func (f *factory) buildOne(rec *pantry.Recipe, proj, ver string) {
 	// they are _1 — and a read failure refuses rather than guesses, because a
 	// guessed number is a collision.
 	publishVersion := res.Version
+	// ⛔ BEFORE ANYTHING IS STAGED OR PUSHED: a prefix the installer marked as
+	// seed-installed cannot feed a build that does not say so.
+	if err := refuseSeededPrefixes(res.BuildEnv, f.seeded); err != nil {
+		f.fail(proj, res.Version, "seed", err)
+		return
+	}
 	if f.rebuild {
 		n, rerr := nextRebuild(proj, res.Version, f.osn, f.arch)
 		if rerr != nil {
