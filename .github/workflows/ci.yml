@@ -130,7 +130,7 @@ jobs:
       - uses: actions/setup-go@v7
         with: { go-version: '1.27.4' }
       - name: install the real zpkx
-        run: GOBIN="$RUNNER_TEMP/zpkx-bin" go install github.com/go-zpkg/zpkx@v0.45.0
+        run: GOBIN="$RUNNER_TEMP/zpkx-bin" go install github.com/go-zpkg/zpkx@v0.46.0
       - name: seed build end to end
         env:
           ZPKB_E2E_ZPKX: ${{ runner.temp }}/zpkx-bin/zpkx

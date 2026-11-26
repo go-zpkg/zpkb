@@ -21,9 +21,11 @@ import (
 // maxProvisionEnv bounds the environment text one closure may produce.
 const maxProvisionEnv = 4 << 20
 
-// ledgerFD is the path a child opens to reach the ledger pipe passed as its
-// first extra descriptor.
-const ledgerFD = "/dev/fd/3"
+// ledgerFD is the descriptor number the ledger pipe has in the child: the first
+// extra descriptor of exec.Cmd. zpkx is told the NUMBER (--seed-ledger-fd) and
+// writes to that descriptor itself; there is no path to look up, so a build
+// chroot with no /dev/fd, or with a /dev/fd somebody made, changes nothing.
+const ledgerFD = "3"
 
 // Seams, so the two ways a pipe can be unavailable are testable.
 var (
@@ -36,15 +38,21 @@ var (
 // refuses that under a seed, by design). Every closure is installed by a zpkx
 // started here with the seed flags, so everything it fetches is verified and
 // recorded in a ledger the factory owns; the entries are merged into the set the
-// plan signs. The ledger a zpkx writes is a pipe private to one call, drained
-// here: no file exists for another process to rewrite between zpkx's write and
-// the read-back, and what a pipe holds can only be appended to. LIMIT: a process
-// that inherited the pipe (zpkx replaces itself with the build command) can still
-// append a line while the call runs; an appended line can only add an entry to
-// the ledger, never alter or remove one, and a line that is not an entry is
-// refused. The plan-phase ledger, a file the artifact package writes in the
-// factory's 0700 temporary, must still be empty (Verify) when the entries are
-// signed.
+// plan signs. The ledger a zpkx writes is a pipe private to one call, handed
+// over as a descriptor and drained here: no file exists in a directory for
+// another process to rewrite between zpkx's write and the read-back.
+//
+// WHAT HOLDS, AND WHAT DOES NOT. The pipe is not a defence against a process of
+// the factory's own user, or root: on Linux /proc/<pid>/fd lets such a process
+// read lines out of it or append to it. So the ledger is not trusted for what
+// it says: every record is cross-checked against the seed prefixes the call
+// actually staged in the store (the marker the installer writes there carries
+// the signed digest), a record naming a prefix that is not staged and a staged
+// prefix with no record are both refused, and so is a read that the deadline
+// ended. What the cross-check cannot cover is a writer who can also forge the
+// store's markers; that is the store's own trust, not this ledger's. The
+// plan-phase ledger, a file the artifact package writes in the factory's 0700
+// temporary, must still be empty (Verify) when the entries are signed.
 type seedProvisioner struct {
 	zpkx string
 	from string // the seed registry, as $ZPKX_SEEDED names it
@@ -163,15 +171,15 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 		return "", err
 	}
 	// The ledger is a pipe, not a file: there is no path in any directory for
-	// code of the same user to rewrite between zpkx's write and the read-back,
-	// and what a pipe holds can only be appended to, never edited or removed. The
-	// child opens it as /dev/fd/3.
+	// code of the same user to rewrite between zpkx's write and the read-back.
+	// The child writes to descriptor 3 (--seed-ledger-fd), never to a path.
 	pr, pw, err := newPipe()
 	if err != nil {
 		return "", err
 	}
 	defer pr.Close()
-	args := []string{"--seed-from", p.from, "--seed-ledger", ledgerFD}
+	before := stagedSeeds(artifact.Dir())
+	args := []string{"--seed-from", p.from, "--seed-ledger-fd", ledgerFD}
 	for _, s := range specs {
 		args = append(args, "+"+s)
 	}
@@ -200,6 +208,9 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := crossCheckLedger(artifact.Dir(), es, before, stagedSeeds(artifact.Dir())); err != nil {
+		return "", err
+	}
 	p.add(es)
 	return out.String(), nil
 }
@@ -213,8 +224,14 @@ type ledgerRead struct {
 	err error
 }
 
-// drainLedger reads the pipe until EOF or its deadline. It keeps reading past
-// the bound (and drops it) so a writer is never blocked on a full pipe.
+// errLedgerNotClosed is a read that the deadline ended: something still holds
+// the write end after the call ended, so what was read is not known to be the
+// whole ledger.
+var errLedgerNotClosed = errors.New("seed ledger: the call ended and something still holds the ledger open; what was read is not known to be all of it")
+
+// drainLedger reads the pipe until EOF. It keeps reading past the bound (and
+// drops it) so a writer is never blocked on a full pipe. A read ended by the
+// deadline is an error, never a short ledger accepted as complete.
 func drainLedger(r io.Reader) ([]byte, error) {
 	b, err := io.ReadAll(io.LimitReader(r, artifact.MaxSeedLedgerBytes+1))
 	if err == nil && len(b) > artifact.MaxSeedLedgerBytes {
@@ -225,9 +242,60 @@ func drainLedger(r io.Reader) ([]byte, error) {
 		return nil, errors.Join(err, fmt.Errorf("seed ledger: larger than %d bytes", artifact.MaxSeedLedgerBytes))
 	}
 	if errors.Is(err, os.ErrDeadlineExceeded) {
-		err = nil
+		return nil, errLedgerNotClosed
 	}
 	return b, err
+}
+
+// seedMarkerGlobs are the depths a project name can have under the store.
+var seedMarkerGlobs = []string{
+	"*/v*/" + artifact.SeedMarkerName,
+	"*/*/v*/" + artifact.SeedMarkerName,
+	"*/*/*/v*/" + artifact.SeedMarkerName,
+}
+
+// stagedSeeds is every seed marker the store holds, as path -> the digest the
+// installer recorded in it. An unreadable marker maps to "": it is staged, and
+// no record can match it.
+func stagedSeeds(dir string) map[string]string {
+	out := map[string]string{}
+	for _, g := range seedMarkerGlobs {
+		ms, _ := filepath.Glob(filepath.Join(dir, g)) // the patterns are constant: no error
+		for _, m := range ms {
+			d, _, _ := artifact.IsSeedPrefix(filepath.Dir(m))
+			out[m] = d
+		}
+	}
+	return out
+}
+
+// seedPrefixOf is where the installer puts the artifact a record names: the
+// directory is named from the content digest, and carries the marker.
+func seedPrefixOf(dir string, e artifact.SeedEntry) string {
+	v := artifact.ParseVer(e.Version)
+	return artifact.StoreBuildPrefix(dir, e.Project, v, artifact.StoreHash(v, e.Digest, ""))
+}
+
+// crossCheckLedger refuses a ledger that disagrees with what the call staged.
+// Every record must name a prefix the store holds, marked with that record's
+// digest (an injected record has none); and every marker that appeared during
+// the call must be named by a record (a removed record, or a ledger the writer
+// never reached, leaves one unaccounted for).
+func crossCheckLedger(dir string, es []artifact.SeedEntry, before, after map[string]string) error {
+	named := map[string]bool{}
+	for _, e := range es {
+		m := filepath.Join(seedPrefixOf(dir, e), artifact.SeedMarkerName)
+		if d, ok := after[m]; !ok || d != e.Digest {
+			return fmt.Errorf("seed ledger names %s %s (%s), which the call did not stage: refusing a record nothing installed", e.Project, e.Version, e.Digest)
+		}
+		named[m] = true
+	}
+	for m := range after {
+		if _, had := before[m]; !had && !named[m] {
+			return fmt.Errorf("seed ledger has no record of %s, which the call staged: refusing a ledger that lost an entry", filepath.Dir(m))
+		}
+	}
+	return nil
 }
 
 // parseSeedLedger is artifact.ReadSeedLedger over bytes already read: a line
