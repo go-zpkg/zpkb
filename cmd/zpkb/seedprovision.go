@@ -142,7 +142,8 @@ func (p *seedProvisioner) add(es []artifact.SeedEntry) {
 }
 
 // Entries is every seed artifact the build environment was made of: the
-// snapshot taken at the start plus what each closure installed.
+// snapshot taken at the start, what each closure installed, and what a failed
+// closure staged with a valid record (it stays in the store a later build uses).
 func (p *seedProvisioner) Entries() []artifact.SeedEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
