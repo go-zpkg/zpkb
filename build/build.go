@@ -305,6 +305,28 @@ func SpecProject(spec string) string {
 // scopes, which is what a dry run and a closure walk want; the build passes the
 // real version so a scope that does not apply does not install anything.
 func DepTokens(runtime, buildDeps map[string]any, tgt target.Target, zpkgDir string, resolve func(project, constraint string) (string, error), pkgVersion string) ([]moustache.Token, []moustache.Dep, error) {
+	return DepTokensBuilt(runtime, buildDeps, tgt, zpkgDir, resolve, pkgVersion, nil)
+}
+
+// BuiltKey is the key of a build in the `built` map of DepTokensBuilt and of
+// Runner.Built: one project at one resolved version.
+func BuiltKey(project, version string) string { return project + "@" + version }
+
+// DepTokensBuilt is DepTokens told which builds THIS RUN already made.
+//
+// ⛔⛔ A DEPENDENCY BUILT EARLIER IN THE SAME RUN IS ASKED FOR BY ITS HASH.
+// built maps BuiltKey(project, version) to the Concrete hash of the build the
+// run made. Asking the store by (project, version) alone is ambiguous the moment
+// a second build of that version is installed — a seed pass has exactly that: the
+// seed's own gmp 6.3.0 AND the one just built — and StorePrefix then fell back to
+// the composed, nonexistent `<dir>/gnu.org/gmp/v6.3.0`: mpfr's configure was
+// handed a directory that is not there ("shall be a valid directory") and the
+// dependency never entered its environment. Measured in seed pass 1c.
+//
+// A request that matches several installed builds and names none of them is a
+// REFUSAL, not the composed path. Nothing installed at all still composes the
+// path, which is what a dry run wants.
+func DepTokensBuilt(runtime, buildDeps map[string]any, tgt target.Target, zpkgDir string, resolve func(project, constraint string) (string, error), pkgVersion string, built map[string]string) ([]moustache.Token, []moustache.Dep, error) {
 	flat := reduceDepMap(runtime, tgt, pkgVersion)
 	for p, c := range reduceDepMap(buildDeps, tgt, pkgVersion) {
 		flat[p] = c
@@ -318,6 +340,10 @@ func DepTokens(runtime, buildDeps map[string]any, tgt target.Target, zpkgDir str
 	deps := make([]moustache.Dep, 0, len(projects))
 	for _, p := range projects {
 		ver, err := resolve(p, flat[p])
+		if err != nil {
+			return nil, nil, err
+		}
+		prefix, err := depPrefix(zpkgDir, p, ver, built)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -339,10 +365,33 @@ func DepTokens(runtime, buildDeps map[string]any, tgt target.Target, zpkgDir str
 			// artifact.StorePrefix resolves the installed build and falls back
 			// to the composed path when nothing is installed, which is the
 			// string this produced before and keeps a dry run unchanged.
-			Path: artifact.StorePrefix(zpkgDir, p, artifact.Ver{Raw: ver}),
+			Path: prefix,
 		})
 	}
 	return moustache.Deps(deps), deps, nil
+}
+
+// depPrefix is the install prefix of one dependency: the build this run made if
+// there is one, else the single installed build, else — nothing installed — the
+// composed path. Several installed and none named is an error.
+func depPrefix(zpkgDir, project, ver string, built map[string]string) (string, error) {
+	v := artifact.Ver{Raw: ver}
+	if h := built[BuiltKey(project, ver)]; h != "" {
+		return artifact.StoreBuildPrefix(zpkgDir, project, v, h), nil
+	}
+	if _, ok := artifact.ResolveBuild(zpkgDir, project, v); !ok {
+		n := 0
+		for _, b := range artifact.InstalledBuilds(project, zpkgDir) {
+			if b.Raw == ver {
+				n++
+			}
+		}
+		if n > 1 {
+			return "", fmt.Errorf("dependency %s %s: %d builds are installed in %s and none was built by this run — "+
+				"refusing to compose a path that does not exist", project, ver, n, zpkgDir)
+		}
+	}
+	return artifact.StorePrefix(zpkgDir, project, v), nil
 }
 
 func platformKey(k string) (os, arch string, ok bool) {
