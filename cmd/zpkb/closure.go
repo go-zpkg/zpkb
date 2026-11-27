@@ -231,9 +231,10 @@ func closureRecipes(set *logical.Set, overlayDir, pantryDir, proj string) ([]*pa
 	// reads it alone (recipefile.LoadBuildRecipe), so the walk must too. Taking
 	// the union with upstream's twin planned gettext, a second openssl major and
 	// ICU that the build never asked for.
-	if r, ok, err := recipefile.LoadStandaloneOverlay(overlayDir, proj); err != nil {
-		return nil, err
-	} else if ok {
+	//
+	// An error here is not returned: the overlay did not read, ok is false, and
+	// the loop below reads the same file and reports the same failure.
+	if r, ok, _ := recipefile.LoadStandaloneOverlay(overlayDir, proj); ok {
 		return []*pantry.Recipe{r}, nil
 	}
 	var recs []*pantry.Recipe
