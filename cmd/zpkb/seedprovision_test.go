@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,9 +75,9 @@ func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
 	}
 }
 
-const entryLine = `{"project":"p","version":"1.0.0","digest":"sha256:d","signers":[],"keys":[],"source":"s"}`
+const entryLine = `{"project":"p","version":"1.0.0","digest":"sha256:d","signers":[],"keys":[],"source":"oci://seed"}`
 
-var testEntry = artifact.SeedEntry{Project: "p", Version: "1.0.0", Digest: "sha256:d", Signers: []string{}, Keys: []string{}, Source: "s"}
+var testEntry = artifact.SeedEntry{Project: "p", Version: "1.0.0", Digest: "sha256:d", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 
 // seedStore points the artifact store at a directory of the test's own, which
 // the fake zpkx stages seeds in (the real one installs them there).
@@ -172,7 +173,7 @@ func TestProvisionerPassesADescriptorAndRefusesAPathWritingZpkx(t *testing.T) {
 		t.Fatalf("the descriptor form: %v", err)
 	}
 	t.Chdir(t.TempDir())
-	b, _ := json.Marshal(artifact.SeedEntry{Project: "q", Version: "1", Digest: "sha256:q", Signers: []string{}, Keys: []string{}, Source: "s"})
+	b, _ := json.Marshal(artifact.SeedEntry{Project: "q", Version: "1", Digest: "sha256:q", Signers: []string{}, Keys: []string{}, Source: "oci://seed"})
 	old := fakeZpkx(t, stageSh(dir, artifact.SeedEntry{Project: "q", Version: "1", Digest: "sha256:q"})+
 		"printf '%s\\n' '"+string(b)+"' >> \"$4\"\n")
 	q, err := newSeedProvisioner(old, "oci://seed", nil)
@@ -191,15 +192,26 @@ func TestProvisionerPassesADescriptorAndRefusesAPathWritingZpkx(t *testing.T) {
 // staged, recorded one is accepted.
 func TestProvisionerCrossChecksTheLedgerAgainstTheStagedSeeds(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://seed")
-	other := artifact.SeedEntry{Project: "gnu.org/o", Version: "2.0", Digest: "sha256:e", Signers: []string{}, Keys: []string{}, Source: "s"}
-	deep := artifact.SeedEntry{Project: "a.org/b/c", Version: "3", Digest: "sha256:f", Signers: []string{}, Keys: []string{}, Source: "s"}
+	other := artifact.SeedEntry{Project: "gnu.org/o", Version: "2.0", Digest: "sha256:e", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	deep := artifact.SeedEntry{Project: "a.org/b/c", Version: "3", Digest: "sha256:f", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	deeper := artifact.SeedEntry{Project: "a.org/b/c/d", Version: "3", Digest: "sha256:f2", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	deepest := artifact.SeedEntry{Project: "a/b/c/d/e/f/g/h", Version: "3", Digest: "sha256:f3", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 	for name, c := range map[string]struct {
 		script func(dir string) string
 		want   string // "" accepts
 	}{
 		"matching":            {func(d string) string { return stageSh(d, testEntry) + emitSh(testEntry) }, ""},
 		"three-level project": {func(d string) string { return stageSh(d, deep) + emitSh(deep) }, ""},
-		"injected":            {func(d string) string { return emitSh(testEntry) }, "did not stage"},
+		"four-level project":  {func(d string) string { return stageSh(d, deeper) + emitSh(deeper) }, ""},
+		"eight-level project": {func(d string) string { return stageSh(d, deepest) + emitSh(deepest) }, ""},
+		"four-level staged, no record": {func(d string) string {
+			return stageSh(d, deeper) + stageSh(d, deep) + emitSh(deep)
+		}, "lost an entry"},
+		"marker that is a directory": {func(d string) string {
+			p := seedPrefixOf(d, testEntry)
+			return "mkdir -p '" + p + "/" + artifact.SeedMarkerName + "'\n" + emitSh(testEntry)
+		}, "did not stage"},
+		"injected": {func(d string) string { return emitSh(testEntry) }, "did not stage"},
 		"another digest in the marker": {func(d string) string {
 			return stageAs(d, testEntry, "sha256:other") + emitSh(testEntry)
 		}, "did not stage"},
@@ -345,33 +357,156 @@ func TestProvisionerRefusesWithoutAPipe(t *testing.T) {
 }
 
 func TestParseSeedLedger(t *testing.T) {
-	ord := `{"project":"p","version":"%s","digest":"%s"}` + "\n"
+	ord := `{"project":"p","version":"%s","digest":"%s","source":"oci://seed"}` + "\n"
 	in := strings.NewReplacer("%s", "X").Replace("") +
 		strings.Replace(strings.Replace(ord, "%s", "2", 1), "%s", "d1", 1) +
 		strings.Replace(strings.Replace(ord, "%s", "1", 1), "%s", "d2", 1) +
 		strings.Replace(strings.Replace(ord, "%s", "1", 1), "%s", "d1", 1)
-	if es, err := parseSeedLedger([]byte(in)); err != nil || len(es) != 3 ||
+	if es, err := parseSeedLedger([]byte(in), "oci://seed"); err != nil || len(es) != 3 ||
 		es[0].Version != "1" || es[0].Digest != "d1" || es[1].Digest != "d2" || es[2].Version != "2" {
 		t.Errorf("ordered by project, version, digest: %+v, %v", es, err)
 	}
 	two := entryLine + "\n\n" + strings.Replace(entryLine, `"p"`, `"a"`, 1) + "\n" + entryLine + "\n"
-	es, err := parseSeedLedger([]byte(two))
+	es, err := parseSeedLedger([]byte(two), "oci://seed")
 	if err != nil || len(es) != 2 || es[0].Project != "a" || es[1].Project != "p" {
 		t.Errorf("sorted and deduplicated: %+v, %v", es, err)
 	}
-	if es, err := parseSeedLedger(nil); err != nil || len(es) != 0 {
+	if es, err := parseSeedLedger(nil, "oci://seed"); err != nil || len(es) != 0 {
 		t.Errorf("an empty ledger: %+v, %v", es, err)
 	}
+	src := `,"source":"oci://seed"}` + "\n"
 	for name, in := range map[string]string{
 		"not json":      "notjson\n",
-		"unknown field": `{"project":"p","version":"1","digest":"d","extra":1}` + "\n",
-		"no digest":     `{"project":"p","version":"1"}` + "\n",
-		"no project":    `{"version":"1","digest":"d"}` + "\n",
-		"no version":    `{"project":"p","digest":"d"}` + "\n",
+		"unknown field": `{"project":"p","version":"1","digest":"d","extra":1` + src,
+		"no digest":     `{"project":"p","version":"1"` + src,
+		"no project":    `{"version":"1","digest":"d"` + src,
+		"no version":    `{"project":"p","digest":"d"` + src,
+		// The record is bound to what was asked for.
+		"another registry":     `{"project":"p","version":"1","digest":"d","source":"oci://elsewhere"}` + "\n",
+		"no registry":          `{"project":"p","version":"1","digest":"d"}` + "\n",
+		"a key not in the set": `{"project":"p","version":"1","digest":"d","keys":["nobody"]` + src,
+		"a dotdot project":     `{"project":"x/../zlib.net","version":"1","digest":"d"` + src,
+		"a leading slash":      `{"project":"/p","version":"1","digest":"d"` + src,
+		"a build-like segment": `{"project":"a/v1.0/b","version":"1","digest":"d"` + src,
+		"bytes after the line": `{"project":"p","version":"1","digest":"d"` + `,"source":"oci://seed"} {}` + "\n",
+		"two lines disagree": `{"project":"p","version":"1","digest":"d","signers":["a"]` + src +
+			`{"project":"p","version":"1","digest":"d","signers":["b"]` + src,
 	} {
-		if _, err := parseSeedLedger([]byte(in)); err == nil {
+		if _, err := parseSeedLedger([]byte(in), "oci://seed"); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	// Two lines that say the same thing in another order are one record; a key
+	// of the trust set is accepted.
+	id := artifact.SeedTrustSet().Signers[0].KeyID()
+	same := `{"project":"p","version":"1","digest":"d","signers":["b","a"],"keys":["` + id + `"]` + src +
+		`{"project":"p","version":"1","digest":"d","signers":["a","b"],"keys":["` + id + `"]` + src
+	if es, err := parseSeedLedger([]byte(same), "oci://seed"); err != nil || len(es) != 1 {
+		t.Errorf("one record twice: %+v, %v", es, err)
+	}
+}
+
+// The walk of the store is bounded: a tree deeper than any project name is not
+// followed to its end, and a real project is found at its deepest.
+func TestStagedSeedsWalkIsBounded(t *testing.T) {
+	dir := t.TempDir()
+	deep := dir
+	for i := 0; i < maxStoreDepth+3; i++ {
+		deep = filepath.Join(deep, "d")
+	}
+	if err := os.MkdirAll(filepath.Join(deep, "v1-h"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "v1-h", artifact.SeedMarkerName), []byte("x\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if got := stagedSeeds(dir); len(got) != 0 {
+		t.Errorf("a marker deeper than any project was found: %v", got)
+	}
+	if err := os.Symlink(dir, filepath.Join(dir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if got := stagedSeeds(dir); len(got) != 0 {
+		t.Errorf("a symlink was followed: %v", got)
+	}
+}
+
+// A seed staged BETWEEN two calls, by anything but a call, is asked for a
+// record by the next one: nothing is accounted for just because it was there
+// when that call started.
+func TestProvisionerRefusesASeedStagedBetweenCalls(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	dir := seedStore(t)
+	second := artifact.SeedEntry{Project: "q", Version: "1", Digest: "sha256:q", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	z := fakeZpkx(t, `if [ "$#" = 5 ]; then `+stageSh(dir, testEntry)+emitSh(testEntry)+"fi\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Provision([]string{"a"}); err != nil { // nothing new: fine
+		t.Fatalf("a call that staged nothing: %v", err)
+	}
+	mk := fakeZpkx(t, stageSh(dir, second))
+	if out, err := exec.Command(mk).CombinedOutput(); err != nil {
+		t.Fatalf("staging outside a call: %v %s", err, out)
+	}
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "lost an entry") {
+		t.Errorf("a seed staged between two calls was accepted: %v", err)
+	}
+}
+
+// A seed already in the store when the provisioner is made is its baseline, not
+// something a later call must account for.
+func TestProvisionerTrustsTheStoreItStartedFrom(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	dir := seedStore(t)
+	mk := fakeZpkx(t, stageSh(dir, testEntry))
+	if out, err := exec.Command(mk).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	p, err := newSeedProvisioner(fakeZpkx(t, "echo ok\n"), "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Errorf("a baseline seed was refused: %v", err)
+	}
+}
+
+// A pipe that cannot have a read deadline is refused before zpkx starts, and one
+// whose deadline cannot be set after the call ends is refused too: neither
+// hangs on a descendant that holds the write end.
+func TestProvisionerRefusesAPipeWithoutADeadline(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	ran := filepath.Join(t.TempDir(), "ran")
+	z := fakeZpkx(t, ": > '"+ran+"'\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	defer func(f func(*os.File, time.Time) error) { setReadDeadline = f }(setReadDeadline)
+	setReadDeadline = func(*os.File, time.Time) error { return errors.New("no deadlines") }
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "no read deadline") {
+		t.Errorf("a pipe with no deadline: %v", err)
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("zpkx was started on a pipe that cannot time out")
+	}
+	n := 0
+	setReadDeadline = func(f *os.File, t time.Time) error {
+		if n++; n == 1 {
+			return f.SetReadDeadline(t)
+		}
+		return errors.New("no deadlines now")
+	}
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "could not be set") {
+		t.Errorf("a deadline that cannot be set after the call: %v", err)
 	}
 }
 
@@ -379,8 +514,8 @@ func TestProvisionerRecordsWhatEachClosureInstalled(t *testing.T) {
 	// Arguments are --seed-from X --seed-ledger-fd 3 +spec...: $5 is the first
 	// spec, and $# (5 for one spec, 6 for two) picks the seed this call stages.
 	dir := seedStore(t)
-	five := artifact.SeedEntry{Project: "p5", Version: "1.0.0", Digest: "sha256:d5", Signers: []string{}, Keys: []string{}, Source: "s"}
-	six := artifact.SeedEntry{Project: "p6", Version: "1.0.0", Digest: "sha256:d6", Signers: []string{}, Keys: []string{}, Source: "s"}
+	five := artifact.SeedEntry{Project: "p5", Version: "1.0.0", Digest: "sha256:d5", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	six := artifact.SeedEntry{Project: "p6", Version: "1.0.0", Digest: "sha256:d6", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 	z := fakeZpkx(t, `
 if [ -n "$ZPKX_SEEDED" ]; then echo nested >&2; exit 9; fi
 [ "$1" = "--seed-from" ] && [ "$2" = "oci://seed" ] && [ "$3" = "--seed-ledger-fd" ] && [ "$4" = "3" ] || exit 8

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +32,10 @@ const ledgerFD = "3"
 var (
 	seedPipe = seedPipeSupported
 	newPipe  = os.Pipe
+
+	// setReadDeadline is the pipe's deadline; a pipe that cannot have one would
+	// leave the drain waiting for a descendant that holds the write end.
+	setReadDeadline = func(f *os.File, t time.Time) error { return f.SetReadDeadline(t) }
 )
 
 // seedProvisioner composes the build environment of a seeded build in the
@@ -44,15 +49,18 @@ var (
 //
 // WHAT HOLDS, AND WHAT DOES NOT. The pipe is not a defence against a process of
 // the factory's own user, or root: on Linux /proc/<pid>/fd lets such a process
-// read lines out of it or append to it. So the ledger is not trusted for what
-// it says: every record is cross-checked against the seed prefixes the call
-// actually staged in the store (the marker the installer writes there carries
-// the signed digest), a record naming a prefix that is not staged and a staged
-// prefix with no record are both refused, and so is a read that the deadline
-// ended. What the cross-check cannot cover is a writer who can also forge the
-// store's markers; that is the store's own trust, not this ledger's. The
-// plan-phase ledger, a file the artifact package writes in the factory's 0700
-// temporary, must still be empty (Verify) when the entries are signed.
+// read lines out of it or append to it, and the same process can write the
+// store. The cross-check is a detector of accidents (a zpkx that died, a lost
+// or doubled record) and of a forgery by a writer that does not control the
+// store; it is NOT a barrier against the same uid. Each record must name the
+// registry asked for, a valid project name and keys of the trust set, and
+// agree with any other line for the same artifact; it is checked against the
+// seed prefixes found by walking the store (the marker the installer writes
+// there carries the signed digest); a record naming a prefix that is not staged,
+// and a staged prefix no record names (also one staged between two calls), are
+// both refused, and so is a read that the deadline ended. The plan-phase
+// ledger, a file the artifact package writes in the factory's 0700 temporary,
+// must still be empty (Verify) when the entries are signed.
 type seedProvisioner struct {
 	zpkx string
 	from string // the seed registry, as $ZPKX_SEEDED names it
@@ -63,6 +71,11 @@ type seedProvisioner struct {
 	entries []artifact.SeedEntry
 	seen    map[string]bool
 	calls   int
+
+	// accounted is every marker of the store that a record names, or that was
+	// there when the provisioner was made: a marker outside it is a seed nobody
+	// recorded.
+	accounted map[string]string
 }
 
 func newSeedProvisioner(zpkx, from string, base []artifact.SeedEntry) (*seedProvisioner, error) {
@@ -80,7 +93,7 @@ func newSeedProvisioner(zpkx, from string, base []artifact.SeedEntry) (*seedProv
 	// (WithSeedSource insists on a ledger file being set; a listing installs
 	// nothing, so it stays empty).
 	artifact.SetSeedLedgerFile(filepath.Join(dir, "resolve-ledger"))
-	p := &seedProvisioner{zpkx: zpkx, from: from, dir: dir, seen: map[string]bool{}}
+	p := &seedProvisioner{zpkx: zpkx, from: from, dir: dir, seen: map[string]bool{}, accounted: stagedSeeds(artifact.Dir())}
 	p.add(base)
 	return p, nil
 }
@@ -178,7 +191,10 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 		return "", err
 	}
 	defer pr.Close()
-	before := stagedSeeds(artifact.Dir())
+	defer pw.Close()
+	if err := setReadDeadline(pr, time.Time{}); err != nil {
+		return "", fmt.Errorf("seed ledger: this pipe has no read deadline, so a descendant holding it could hang the build: %w", err)
+	}
 	args := []string{"--seed-from", p.from, "--seed-ledger-fd", ledgerFD}
 	for _, s := range specs {
 		args = append(args, "+"+s)
@@ -196,7 +212,10 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	pw.Close()
 	// A descendant may still hold the write end: what the call wrote is already
 	// in the pipe, so stop reading after a short grace instead of waiting for EOF.
-	pr.SetReadDeadline(time.Now().Add(drainGrace))
+	if derr := setReadDeadline(pr, time.Now().Add(drainGrace)); derr != nil {
+		// Not waited for: got is buffered, and the deferred Close ends the drain.
+		return "", fmt.Errorf("seed ledger: the read deadline could not be set: %w", derr)
+	}
 	l := <-got
 	if err != nil {
 		return "", err
@@ -204,12 +223,16 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	if l.err != nil {
 		return "", l.err
 	}
-	es, err := parseSeedLedger(l.b)
+	es, err := parseSeedLedger(l.b, p.from)
 	if err != nil {
 		return "", err
 	}
-	if err := crossCheckLedger(artifact.Dir(), es, before, stagedSeeds(artifact.Dir())); err != nil {
+	after := stagedSeeds(artifact.Dir())
+	if err := crossCheckLedger(artifact.Dir(), es, p.accounted, after); err != nil {
 		return "", err
+	}
+	for m, d := range after {
+		p.accounted[m] = d
 	}
 	p.add(es)
 	return out.String(), nil
@@ -247,30 +270,61 @@ func drainLedger(r io.Reader) ([]byte, error) {
 	return b, err
 }
 
-// seedMarkerGlobs are the depths a project name can have under the store.
-var seedMarkerGlobs = []string{
-	"*/v*/" + artifact.SeedMarkerName,
-	"*/*/v*/" + artifact.SeedMarkerName,
-	"*/*/*/v*/" + artifact.SeedMarkerName,
+// maxStoreDepth bounds the walk of the store: a project name has at most 8
+// segments (artifact.ValidateProjectName), and the build directory is one more.
+const maxStoreDepth = 9
+
+// isBuildDirName is a directory named like a build: v, then a digit. Such a
+// directory is checked for a marker and never entered (it holds an installed
+// tree), so a project segment named like one could not be located.
+func isBuildDirName(n string) bool {
+	return len(n) > 1 && n[0] == 'v' && n[1] >= '0' && n[1] <= '9'
+}
+
+func hasBuildDirSegment(project string) bool {
+	for _, s := range strings.Split(project, "/") {
+		if isBuildDirName(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // stagedSeeds is every seed marker the store holds, as path -> the digest the
-// installer recorded in it. An unreadable marker maps to "": it is staged, and
-// no record can match it.
+// installer recorded in it, found by walking the store (any depth a project
+// name can have), not by patterns of fixed depth. Only real directories are
+// entered: the symlinked aliases of a build are the same tree. A directory that
+// carries a marker is never entered. An unreadable marker maps to "": it is
+// staged, and no record can match it.
 func stagedSeeds(dir string) map[string]string {
 	out := map[string]string{}
-	for _, g := range seedMarkerGlobs {
-		ms, _ := filepath.Glob(filepath.Join(dir, g)) // the patterns are constant: no error
-		for _, m := range ms {
-			d, _, _ := artifact.IsSeedPrefix(filepath.Dir(m))
-			out[m] = d
-		}
-	}
+	walkSeeds(dir, 0, out)
 	return out
 }
 
+func walkSeeds(p string, depth int, out map[string]string) {
+	if depth > maxStoreDepth {
+		return
+	}
+	es, _ := os.ReadDir(p) // an absent or unreadable directory holds nothing to find
+	for _, e := range es {
+		if !e.IsDir() {
+			continue
+		}
+		c := filepath.Join(p, e.Name())
+		if d, seeded, err := artifact.IsSeedPrefix(c); seeded || err != nil {
+			out[filepath.Join(c, artifact.SeedMarkerName)] = d
+			continue
+		}
+		if !isBuildDirName(e.Name()) {
+			walkSeeds(c, depth+1, out)
+		}
+	}
+}
+
 // seedPrefixOf is where the installer puts the artifact a record names: the
-// directory is named from the content digest, and carries the marker.
+// directory is named from the content digest, and carries the marker. The
+// project is a validated name here, and joined, never cleaned onto another.
 func seedPrefixOf(dir string, e artifact.SeedEntry) string {
 	v := artifact.ParseVer(e.Version)
 	return artifact.StoreBuildPrefix(dir, e.Project, v, artifact.StoreHash(v, e.Digest, ""))
@@ -279,9 +333,10 @@ func seedPrefixOf(dir string, e artifact.SeedEntry) string {
 // crossCheckLedger refuses a ledger that disagrees with what the call staged.
 // Every record must name a prefix the store holds, marked with that record's
 // digest (an injected record has none); and every marker that appeared during
-// the call must be named by a record (a removed record, or a ledger the writer
-// never reached, leaves one unaccounted for).
-func crossCheckLedger(dir string, es []artifact.SeedEntry, before, after map[string]string) error {
+// the store holds that no earlier call accounted for must be named by a record
+// (a removed record, a ledger the writer never reached, or a seed staged
+// between two calls, leaves one unaccounted for).
+func crossCheckLedger(dir string, es []artifact.SeedEntry, accounted, after map[string]string) error {
 	named := map[string]bool{}
 	for _, e := range es {
 		m := filepath.Join(seedPrefixOf(dir, e), artifact.SeedMarkerName)
@@ -291,18 +346,37 @@ func crossCheckLedger(dir string, es []artifact.SeedEntry, before, after map[str
 		named[m] = true
 	}
 	for m := range after {
-		if _, had := before[m]; !had && !named[m] {
+		if _, had := accounted[m]; !had && !named[m] {
 			return fmt.Errorf("seed ledger has no record of %s, which the call staged: refusing a ledger that lost an entry", filepath.Dir(m))
 		}
 	}
 	return nil
 }
 
+// trustedKeyIDs is the set of key ids the seed trust set holds: a record may
+// name no other key as having signed what it installed.
+func trustedKeyIDs() map[string]bool {
+	ids := map[string]bool{}
+	for _, s := range artifact.SeedTrustSet().Signers {
+		ids[s.KeyID()] = true
+	}
+	return ids
+}
+
+// sameRecord is whether two lines with one (project, version, digest) say the
+// same thing: the first of them must not win over a second that disagrees.
+func sameRecord(a, b artifact.SeedEntry) bool {
+	return a.Source == b.Source && slices.Equal(a.Signers, b.Signers) && slices.Equal(a.Keys, b.Keys)
+}
+
 // parseSeedLedger is artifact.ReadSeedLedger over bytes already read: a line
 // that is not an entry is an error, never skipped, and the entries come back
-// in the same canonical order.
-func parseSeedLedger(b []byte) ([]artifact.SeedEntry, error) {
-	seen := map[string]bool{}
+// in the same canonical order. A record is bound to what this provisioner
+// asked for: it names the registry it was given (from), a project name that is
+// one, and keys the trust set holds; two lines for one artifact must agree.
+func parseSeedLedger(b []byte, from string) ([]artifact.SeedEntry, error) {
+	trusted := trustedKeyIDs()
+	seen := map[string]artifact.SeedEntry{}
 	var out []artifact.SeedEntry
 	for i, line := range strings.Split(string(b), "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -314,14 +388,38 @@ func parseSeedLedger(b []byte) ([]artifact.SeedEntry, error) {
 		if err := dec.Decode(&e); err != nil {
 			return nil, fmt.Errorf("seed ledger line %d: %w", i+1, err)
 		}
+		var rest json.RawMessage
+		if err := dec.Decode(&rest); err != io.EOF {
+			return nil, fmt.Errorf("seed ledger line %d: bytes after the entry", i+1)
+		}
 		if e.Project == "" || e.Version == "" || e.Digest == "" {
 			return nil, fmt.Errorf("seed ledger line %d: an entry names a project, a version and a digest", i+1)
 		}
-		sort.Strings(e.Signers)
-		if k := provisionKey(e); !seen[k] {
-			seen[k] = true
-			out = append(out, e)
+		if err := artifact.ValidateProjectName(e.Project); err != nil {
+			return nil, fmt.Errorf("seed ledger line %d: %w", i+1, err)
 		}
+		if hasBuildDirSegment(e.Project) {
+			return nil, fmt.Errorf("seed ledger line %d: project %q has a segment the store check cannot tell from a build directory", i+1, e.Project)
+		}
+		if e.Source != from {
+			return nil, fmt.Errorf("seed ledger line %d: source %q is not the seed registry %q", i+1, e.Source, from)
+		}
+		sort.Strings(e.Signers)
+		sort.Strings(e.Keys)
+		for _, k := range e.Keys {
+			if !trusted[k] {
+				return nil, fmt.Errorf("seed ledger line %d: key %q is not in the seed trust set", i+1, k)
+			}
+		}
+		k := provisionKey(e)
+		if first, ok := seen[k]; ok {
+			if !sameRecord(first, e) {
+				return nil, fmt.Errorf("seed ledger line %d: two records for %s %s disagree", i+1, e.Project, e.Version)
+			}
+			continue
+		}
+		seen[k] = e
+		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
