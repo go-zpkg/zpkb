@@ -195,14 +195,20 @@ func TestProvisionerCrossChecksTheLedgerAgainstTheStagedSeeds(t *testing.T) {
 	other := artifact.SeedEntry{Project: "gnu.org/o", Version: "2.0", Digest: "sha256:e", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 	deep := artifact.SeedEntry{Project: "a.org/b/c", Version: "3", Digest: "sha256:f", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 	deeper := artifact.SeedEntry{Project: "a.org/b/c/d", Version: "3", Digest: "sha256:f2", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	// A real project whose last segment looks like a version (pcre.org/v2).
+	vseg := artifact.SeedEntry{Project: "pcre.org/v2", Version: "3", Digest: "sha256:f4", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 	deepest := artifact.SeedEntry{Project: "a/b/c/d/e/f/g/h", Version: "3", Digest: "sha256:f3", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 	for name, c := range map[string]struct {
 		script func(dir string) string
 		want   string // "" accepts
 	}{
-		"matching":            {func(d string) string { return stageSh(d, testEntry) + emitSh(testEntry) }, ""},
-		"three-level project": {func(d string) string { return stageSh(d, deep) + emitSh(deep) }, ""},
-		"four-level project":  {func(d string) string { return stageSh(d, deeper) + emitSh(deeper) }, ""},
+		"matching":             {func(d string) string { return stageSh(d, testEntry) + emitSh(testEntry) }, ""},
+		"three-level project":  {func(d string) string { return stageSh(d, deep) + emitSh(deep) }, ""},
+		"four-level project":   {func(d string) string { return stageSh(d, deeper) + emitSh(deeper) }, ""},
+		"version-like segment": {func(d string) string { return stageSh(d, vseg) + emitSh(vseg) }, ""},
+		"version-like, no record": {func(d string) string {
+			return stageSh(d, vseg) + stageSh(d, deep) + emitSh(deep)
+		}, "lost an entry"},
 		"eight-level project": {func(d string) string { return stageSh(d, deepest) + emitSh(deepest) }, ""},
 		"four-level staged, no record": {func(d string) string {
 			return stageSh(d, deeper) + stageSh(d, deep) + emitSh(deep)
@@ -387,7 +393,7 @@ func TestParseSeedLedger(t *testing.T) {
 		"a key not in the set": `{"project":"p","version":"1","digest":"d","keys":["nobody"]` + src,
 		"a dotdot project":     `{"project":"x/../zlib.net","version":"1","digest":"d"` + src,
 		"a leading slash":      `{"project":"/p","version":"1","digest":"d"` + src,
-		"a build-like segment": `{"project":"a/v1.0/b","version":"1","digest":"d"` + src,
+		"a build-like segment": `{"project":"a/v1.0-hx/b","version":"1","digest":"d"` + src,
 		"bytes after the line": `{"project":"p","version":"1","digest":"d"` + `,"source":"oci://seed"} {}` + "\n",
 		"two lines disagree": `{"project":"p","version":"1","digest":"d","signers":["a"]` + src +
 			`{"project":"p","version":"1","digest":"d","signers":["b"]` + src,

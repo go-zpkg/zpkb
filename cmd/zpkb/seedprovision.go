@@ -274,11 +274,13 @@ func drainLedger(r io.Reader) ([]byte, error) {
 // segments (artifact.ValidateProjectName), and the build directory is one more.
 const maxStoreDepth = 9
 
-// isBuildDirName is a directory named like a build: v, then a digit. Such a
-// directory is checked for a marker and never entered (it holds an installed
-// tree), so a project segment named like one could not be located.
+// isBuildDirName is a directory named like a build: v, a digit, and the "-h"
+// that precedes the hash of every real build directory (artifact's
+// StoreBuildDirName). Such a directory is never entered (it holds an installed
+// tree), so a project segment named like one could not be located. A plain
+// segment like the "v2" of pcre.org/v2 has no hash and is a project segment.
 func isBuildDirName(n string) bool {
-	return len(n) > 1 && n[0] == 'v' && n[1] >= '0' && n[1] <= '9'
+	return len(n) > 1 && n[0] == 'v' && n[1] >= '0' && n[1] <= '9' && strings.Contains(n, "-h")
 }
 
 func hasBuildDirSegment(project string) bool {
