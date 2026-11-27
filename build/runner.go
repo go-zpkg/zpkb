@@ -31,6 +31,13 @@ type Runner struct {
 	BuildInstall string
 	Install      string
 
+	// Built records, per BuiltKey(project, version), the hash of the build this
+	// runner completed. A dependent built later in the same run finds that
+	// dependency by it: under --stage-only the build is installed but not
+	// published, and (project, version) alone is ambiguous once the seed holds
+	// another build of the same version. Written by BuildPlan, read by Plan.
+	Built map[string]string
+
 	PickVersion func(project, constraint string) (string, error)
 	// ResolveVersion resolves the MAIN project version from the recipe's own
 	// `versions:` spec, so it matches the distributable URL's {{version.raw}}
@@ -258,7 +265,7 @@ func (r *Runner) Plan(recipe *pantry.Recipe, project, constraint string, tgt tar
 		p.toolDeps = BootstrapToolDeps(bd, tgt)
 	}
 	if r.ResolveDep != nil {
-		dt, resolved, err := DepTokens(recipe.Dependencies, bd, tgt, config.ZpkgDir(), r.ResolveDep, version)
+		dt, resolved, err := DepTokensBuilt(recipe.Dependencies, bd, tgt, config.ZpkgDir(), r.ResolveDep, version, r.Built)
 		if err != nil {
 			return p, fmt.Errorf("resolve deps: %w", err)
 		}
@@ -649,6 +656,11 @@ func (r *Runner) BuildPlan(p Plan, recipe *pantry.Recipe, project string, tgt, h
 	if err := r.FixUp(fixup.Options{Prefix: paths.Install, BuildInstall: paths.BuildInstall, Platform: tgt.Platform, ZpkgDir: config.ZpkgDir(), Rootfs: rootfs, RootfsDeps: rootfsDeps}); err != nil {
 		return res, fmt.Errorf("fix-up: %w", err)
 	}
+
+	if r.Built == nil {
+		r.Built = map[string]string{}
+	}
+	r.Built[BuiltKey(project, version)] = p.SpecHash
 
 	// package
 	if distOut != "" {
