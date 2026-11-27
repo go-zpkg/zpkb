@@ -171,6 +171,12 @@ type testRequest struct {
 	// process's $ZPKG_DIST: the destination a factory run just published to.
 	// Empty inherits the environment (go-zpkg/zpkb#532).
 	Dist string
+	// Provision, when set, installs the test closure and returns the environment
+	// it composes, so the script asks zpkx for nothing. A seed pass sets it to the
+	// factory's provisioner: a zpkx run by the script refuses every package
+	// request under a seed, which left ~15 packages NOT-RUN and no staged
+	// artifact tested.
+	Provision func(specs []string) (string, error)
 	// Run executes the generated script; nil uses the package default, which
 	// is the same pure-Go interpreter a build runs under.
 	Run func(scriptPath string, env []string) error
@@ -267,7 +273,7 @@ func runRecipeTest(req testRequest, stdout, stderr io.Writer) (testState, error)
 		shimDir = ""
 	}
 
-	script, err := renderTest(req.Recipe, req.Project, ver, tag, req.Target, paths, box, req.RecipeDir, req.ZpkxBin, shimDir, req.Staged)
+	script, err := renderTest(req.Recipe, req.Project, ver, tag, req.Target, paths, box, req.RecipeDir, req.ZpkxBin, shimDir, req.Staged, req.Provision)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return testNotRun, err
@@ -342,7 +348,8 @@ func withDist(env []string, dist string) []string {
 
 // renderTest turns the recipe's test node into the runnable script.
 func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
-	paths config.Paths, box, recipeDir, zpkxBin, shimDir string, staged bool) (string, error) {
+	paths config.Paths, box, recipeDir, zpkxBin, shimDir string, staged bool,
+	provision func([]string) (string, error)) (string, error) {
 	// {{prefix}} is the INSTALLED prefix, not the build's staging directory.
 	// That is the whole difference between this and a build: the test reads
 	// the package where a consumer would find it, so a file the build made and
@@ -411,7 +418,7 @@ func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
 		pkgSpec = ""
 		deps = append(build.DepSpecsAt(rec.Dependencies, tgt, ver), deps...)
 	}
-	return buildscript.WrapTest(buildscript.TestWrapOptions{
+	opts := buildscript.TestWrapOptions{
 		UserScript: user,
 		// `=ver` so depSpec renders `project@ver`: the exact bytes this run is
 		// about. A bare project name would let pkgx pick whatever version the
@@ -431,7 +438,20 @@ func renderTest(rec *pantry.Recipe, project, ver, tag string, tgt target.Target,
 		BashPath:      "/bin/bash",
 		ShimDir:       shimDir,
 		Host:          target.Host(),
-	}), nil
+	}
+	if provision != nil {
+		// ⛔ UNDER A SEED THE FACTORY INSTALLS THE TEST CLOSURE, NOT THE SCRIPT. A
+		// zpkx the script starts inherits $ZPKX_SEEDED and refuses to fetch the
+		// compiler set from outside the seed, so the test never ran. The same
+		// provisioner the build used installs it from the seed registry and records
+		// it in the ledger, exactly as for the build's own tools.
+		env, err := provision(opts.Specs())
+		if err != nil {
+			return "", fmt.Errorf("zpkb: the test environment failed: %s: %w", strings.Join(opts.Specs(), " "), err)
+		}
+		opts.Provisioned, opts.Env = true, env
+	}
+	return buildscript.WrapTest(opts), nil
 }
 
 // writeShims is a seam: the shims are symlinks, and the only way they fail to

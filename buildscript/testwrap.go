@@ -91,7 +91,21 @@ type TestWrapOptions struct {
 	// putting the flags in $CC, which is what it used to do and what reaches
 	// almost nothing.
 	ShimDir string
+	// Provisioned says Env is the composed environment of the test closure
+	// (Specs), already installed by the caller: the script evaluates it and runs
+	// no zpkx for it. Set under a seed pass, where a zpkx started by the script
+	// refuses every package request ("a seed is in force ... would be fetched
+	// from outside it") and every test would end NOT-RUN. The caller's
+	// provisioner is the one the build used, so what it installs is verified
+	// and recorded in the seed ledger the plan signs.
+	Provisioned bool
+	Env         string
 }
+
+// Specs are the package specs (`name@constraint`, no `+`) of the test closure,
+// for a caller that provisions it itself: exactly what the script would hand to
+// zpkx, so the two never drift.
+func (o TestWrapOptions) Specs() []string { return specsOf(o.testPlus()) }
 
 // EnvFailExit is the status the test script exits with when `pkgx +…` could
 // not assemble the environment — as opposed to the test itself failing.
@@ -176,7 +190,11 @@ func WrapTest(o TestWrapOptions) string {
 	// test has no artefact and no link step: everything it names is something
 	// that has to RUN, so splitting them would invent a distinction the recipe
 	// never made.
-	writeDepEval(&b, zpkxBin, o.testPlus(), "test", EnvFailExit)
+	if o.Provisioned {
+		writeEnvLiteral(&b, o.Env)
+	} else {
+		writeDepEval(&b, zpkxBin, o.testPlus(), "test", EnvFailExit)
+	}
 	// Both spellings, for the reason WrapScript gives: a build script is the
 	// writer of this name, not a reader, so it cannot refuse a retired one.
 	if o.ZpkxBin != "" {

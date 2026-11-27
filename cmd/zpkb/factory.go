@@ -1908,7 +1908,9 @@ func (f *factory) runPublishedTest(rec *pantry.Recipe, proj, ver, hash string, s
 		// altogether. A staged run pushed nothing, so it has no such place.
 		Staged: true,
 		Dist:   dist,
-		Run:    factoryTestRunner(f.testTimeout, tw, tw),
+		// Under a seed the factory installs the test closure itself (nil otherwise).
+		Provision: f.runner.Provision,
+		Run:       factoryTestRunner(f.testTimeout, tw, tw),
 	}, tw, tw)
 	fmt.Fprintln(f.stdout, "::endgroup::")
 	f.recordTest(state, proj, ver, err)
