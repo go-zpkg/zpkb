@@ -246,20 +246,25 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 }
 
 // accountNamed marks as accounted for the staged markers that a valid record of
-// a FAILED call names with the digest the marker holds. It adds no entry: the
-// call failed, so nothing was installed for the build. A ledger that does not
-// parse accounts for nothing.
+// a FAILED call names with the digest the marker holds, and adds their entries.
+// A ledger that does not parse accounts for nothing.
 func (p *seedProvisioner) accountNamed(b []byte) {
 	// parseSeedLedger returns no entry with an error, so a ledger that does not
 	// parse leaves es empty and the loop accounts for nothing.
 	es, _ := parseSeedLedger(b, p.from)
 	after := stagedSeeds(artifact.Dir())
+	var named []artifact.SeedEntry
 	for _, e := range es {
 		m := filepath.Join(seedPrefixOf(artifact.Dir(), e), artifact.SeedMarkerName)
 		if d, ok := after[m]; ok && d == e.Digest {
 			p.accounted[m] = d
+			named = append(named, e)
 		}
 	}
+	// The seed stays in the shared store, and the next call that needs it reuses
+	// it without writing a record: the entry is added now, or the signed set
+	// would leave out an artifact a later build was made of.
+	p.add(named)
 }
 
 // drainGrace is how long the read of a call's ledger goes on after the call
@@ -391,8 +396,10 @@ func trustedKeyIDs() map[string]bool {
 
 // sameRecord is whether two lines with one (project, version, digest) say the
 // same thing: the first of them must not win over a second that disagrees.
+// Source is not compared: parseSeedLedger refuses any record whose source is
+// not the seed registry, so two accepted records always share it.
 func sameRecord(a, b artifact.SeedEntry) bool {
-	return a.Source == b.Source && slices.Equal(a.Signers, b.Signers) && slices.Equal(a.Keys, b.Keys)
+	return slices.Equal(a.Signers, b.Signers) && slices.Equal(a.Keys, b.Keys)
 }
 
 // parseSeedLedger is artifact.ReadSeedLedger over bytes already read: a line

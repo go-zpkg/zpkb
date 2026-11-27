@@ -493,12 +493,23 @@ func TestAFailedCallDoesNotPoisonTheNextOne(t *testing.T) {
 		if _, err := p.Provision([]string{"a"}); err == nil {
 			t.Fatalf("%s: the failing call passed", name)
 		}
-		if len(p.Entries()) != 0 {
-			t.Errorf("%s: a failed call recorded entries: %+v", name, p.Entries())
+		// A recorded seed stays in the store and the next call reuses it without a
+		// record, so its entry is kept from the failed call; nothing else is.
+		want := 0
+		if c.ok {
+			want = 1
+		}
+		if got := p.Entries(); len(got) != want || (want == 1 && provisionKey(got[0]) != provisionKey(testEntry)) {
+			t.Errorf("%s: after the failed call the entries are %+v, want %d of %s", name, got, want, testEntry.Project)
 		}
 		_, err = p.Provision([]string{"a"})
 		if c.ok && err != nil {
 			t.Errorf("%s: the next call was refused: %v", name, err)
+		}
+		if c.ok {
+			if got := p.Entries(); len(got) != 1 || provisionKey(got[0]) != provisionKey(testEntry) {
+				t.Errorf("%s: after the retry the signed set is %+v, want the reused seed", name, got)
+			}
 		}
 		if !c.ok && (err == nil || !strings.Contains(err.Error(), "lost an entry")) {
 			t.Errorf("%s: the next call was not refused for the unrecorded seed: %v", name, err)
