@@ -227,6 +227,15 @@ func depName(spec string) string { return build.SpecProject(spec) }
 //
 // With no overlay directory this is exactly the pantry-only walk it replaces.
 func closureRecipes(set *logical.Set, overlayDir, pantryDir, proj string) ([]*pantry.Recipe, error) {
+	// ⛔ A STANDALONE overlay recipe is the whole recipe (zpkb#514): the build
+	// reads it alone (recipefile.LoadBuildRecipe), so the walk must too. Taking
+	// the union with upstream's twin planned gettext, a second openssl major and
+	// ICU that the build never asked for.
+	if r, ok, err := recipefile.LoadStandaloneOverlay(overlayDir, proj); err != nil {
+		return nil, err
+	} else if ok {
+		return []*pantry.Recipe{r}, nil
+	}
 	var recs []*pantry.Recipe
 	for _, dir := range []string{overlayDir, pantryDir} {
 		if dir == "" {
