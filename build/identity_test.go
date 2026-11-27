@@ -242,17 +242,24 @@ func TestADependencysOwnBuildReachesTheIdentityThroughItsPrefix(t *testing.T) {
 		hashes = append(hashes, h)
 	}
 
-	// With TWO installed, the store cannot say which, so the prefix falls
-	// back to the composed path and the edge degrades to the version. That
-	// is the documented honest behaviour, not a hash we invented.
-	_, resolved, err := DepTokens(
+	// With TWO installed and none named, the store cannot say which: a
+	// refusal, never the composed path, which does not exist.
+	if _, _, err := DepTokens(
 		map[string]any{dep: "^1"}, nil, idTarget, store,
-		func(string, string) (string, error) { return depVer, nil }, "")
+		func(string, string) (string, error) { return depVer, nil }, ""); err == nil {
+		t.Error("two builds installed and none named: want a refusal")
+	}
+
+	// Named by the run that built it, the same two installed builds resolve.
+	_, resolved, err := DepTokensBuilt(
+		map[string]any{dep: "^1"}, nil, idTarget, store,
+		func(string, string) (string, error) { return depVer, nil }, "",
+		map[string]string{BuiltKey(dep, depVer): hashes[1]})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := hashOfPrefix(resolved[0].Path); got != "" {
-		t.Errorf("two builds installed and one was picked anyway: %q", got)
+	if got := hashOfPrefix(resolved[0].Path); got != hashes[1] {
+		t.Errorf("built-this-run hash not used: %q, want %q", got, hashes[1])
 	}
 
 	// With ONE installed, the edge carries that build's own hash — and the
