@@ -1103,7 +1103,13 @@ var autotoolsTiers = [][]string{
 	// same reason — it matches the `.ac` suffix in the inputs tier, and an
 	// exact name cannot claim it.
 	{"config.h.in", "configure", "configure.sh", "preconfigure"},
-	{"Makefile.in"}, // final outputs
+	// automake's own documentation example, shipped PRE-BUILT. Its rule
+	// (doc/local.mk:136) depends on configure.ac, which the inputs tier
+	// rejuvenates, so the tarball's copy came out OLDER than its prerequisite
+	// and `make` rebuilt it: autoreconf, configure and `make distcheck` of a
+	// whole sample project, inside a seed rootfs, failing the automake build
+	// at "doc/amhello-1.0.tar.gz: recipe failed" (seed pass 1b, automake 1.20).
+	{"Makefile.in", "amhello-1.0.tar.gz"}, // final outputs
 }
 
 // TouchAutotools defeats autotools maintainer-mode: an extracted tarball's file

@@ -99,6 +99,7 @@ var osExit = os.Exit
 
 func main() {
 	trustEmbeddedCAs()
+	installWarnSink(os.Stderr)
 	// Multi-call ("busybox-style") dispatch: zpkb is materialised into a build's
 	// libexec dir as symlinks named after brewkit shims. When a recipe execs one
 	// (e.g. `fix-shebangs.ts bin/*`), argv[0] is the symlink path, so its
