@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,6 +77,44 @@ func e2eRun(t *testing.T, env []string, name string, args ...string) (string, st
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
 	return out.String(), errb.String(), err
+}
+
+// The command the real zpkx runs under a seed is the build. The ledger's write
+// end is descriptor 3 of zpkx and must not be one of the build's: a build that
+// could write to it could add an entry no install made. The command here tries,
+// from its own shell and from a child of it, and both must fail; the ledger the
+// reader gets holds what zpkx installed and nothing else.
+func TestTheBuildCommandCannotWriteTheRealZpkxsLedger(t *testing.T) {
+	zpkx := os.Getenv("ZPKB_E2E_ZPKX")
+	if zpkx == "" {
+		t.Skip("ZPKB_E2E_ZPKX names the real zpkx binary; unset, so the network-free suite skips this")
+	}
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Close()
+	cmd := exec.Command(zpkx, "--seed-from", e2eSeedRegistry, "--seed-ledger-fd", "3", "+zlib.net", "--",
+		"/bin/sh", "-c", `if echo forged-by-the-build >&3 2>/dev/null; then exit 7; fi; if (echo forged-by-a-child >&3) 2>/dev/null; then exit 8; fi`)
+	store := t.TempDir()
+	cmd.Env = append(os.Environ(), "ZPKG_DIR="+store, "ZPKG_DIST=", "ZPKX_SEEDED=")
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.ExtraFiles = []*os.File{pw}
+	got := make(chan []byte, 1)
+	go func() { b, _ := io.ReadAll(pr); got <- b }()
+	runErr := cmd.Run()
+	pw.Close()
+	ledger := <-got
+	if runErr != nil {
+		t.Fatalf("zpkx with a build that tries the ledger: %v (7 = the build wrote it, 8 = a child did)\n%s", runErr, out.String())
+	}
+	if len(ledger) == 0 || !strings.Contains(string(ledger), "zlib.net") {
+		t.Errorf("the ledger zpkx wrote does not record the install: %q", ledger)
+	}
+	if strings.Contains(string(ledger), "forged") {
+		t.Errorf("the build wrote into the ledger:\n%s", ledger)
+	}
 }
 
 func TestSeedBuildEndToEndWithTheRealZpkxAndZpkb(t *testing.T) {

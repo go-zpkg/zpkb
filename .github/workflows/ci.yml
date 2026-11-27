@@ -130,11 +130,11 @@ jobs:
       - uses: actions/setup-go@v7
         with: { go-version: '1.27.4' }
       - name: install the real zpkx
-        run: GOBIN="$RUNNER_TEMP/zpkx-bin" go install github.com/go-zpkg/zpkx@v0.45.0
+        run: GOBIN="$RUNNER_TEMP/zpkx-bin" go install github.com/go-zpkg/zpkx@v0.46.1
       - name: seed build end to end
         env:
           ZPKB_E2E_ZPKX: ${{ runner.temp }}/zpkx-bin/zpkx
-        run: go test -count=1 -v -run '^TestSeedBuildEndToEndWithTheRealZpkxAndZpkb$' ./cmd/zpkb
+        run: go test -count=1 -v -run '^(TestSeedBuildEndToEndWithTheRealZpkxAndZpkb|TestTheBuildCommandCannotWriteTheRealZpkxsLedger)$' ./cmd/zpkb
 
   build:
     runs-on: ubuntu-latest

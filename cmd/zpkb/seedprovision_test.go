@@ -3,10 +3,15 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-zpkg/artifact"
 )
@@ -36,12 +41,6 @@ func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
 	defer p.Close()
 	if err := p.Verify(); err != nil {
 		t.Fatalf("a fresh provisioner: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(p.dir, "ledger-1"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("a ledger planted before its call: %v", err)
 	}
 	resolve := filepath.Join(p.dir, "resolve-ledger")
 	if err := os.WriteFile(resolve, nil, 0o600); err != nil {
@@ -76,46 +75,544 @@ func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
 	}
 }
 
-// Only "does not exist" is absence. A directory that cannot be looked into
-// (here: it is a file) is not a ledger path to run a call against.
-func TestProvisionerRefusesALedgerPathItCannotLookUp(t *testing.T) {
-	ran := filepath.Join(t.TempDir(), "ran")
-	z := fakeZpkx(t, ": > "+ran+"\nexit 0\n")
-	dir := filepath.Join(t.TempDir(), "f")
-	if err := os.WriteFile(dir, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := &seedProvisioner{zpkx: z, from: "oci://seed", dir: dir, seen: map[string]bool{}}
-	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "cannot tell") {
-		t.Errorf("an unreadable ledger path: %v", err)
-	}
-	if _, err := os.Stat(ran); err == nil {
-		t.Error("zpkx ran against a ledger path that could not be looked up")
-	}
+// testKey is a key id of the seed trust set: a record names at least one.
+var testKey = artifact.SeedTrustSet().Signers[0].KeyID()
+
+var entryLine = `{"project":"p","version":"1.0.0","digest":"sha256:d","signers":[],"keys":["` + testKey + `"],"source":"oci://seed"}`
+
+var testEntry = artifact.SeedEntry{Project: "p", Version: "1.0.0", Digest: "sha256:d", Signers: []string{}, Keys: []string{testKey}, Source: "oci://seed"}
+
+// seedStore points the artifact store at a directory of the test's own, which
+// the fake zpkx stages seeds in (the real one installs them there).
+func seedStore(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("ZPKG_DIR", dir)
+	return dir
 }
 
-// The directory is swapped for a file while the call runs: the ledger it wrote
-// cannot be read back, which is not the same as the call having written none.
-func TestProvisionerRefusesALedgerItCannotReadBack(t *testing.T) {
-	z := fakeZpkx(t, "d=$(dirname \"$4\"); rm -rf \"$d\"; : > \"$d\"\nexit 0\n")
+// stageSh is the shell text that stages e the way the installer does: a prefix
+// named from the digest, carrying the marker with the digest in it.
+func stageSh(dir string, e artifact.SeedEntry) string {
+	return stageAs(dir, e, e.Digest)
+}
+
+func stageAs(dir string, e artifact.SeedEntry, markDigest string) string {
+	prefix := seedPrefixOf(dir, e)
+	return "mkdir -p '" + prefix + "' && printf '%s\\n' '" + markDigest + "' > '" + prefix + "/" + artifact.SeedMarkerName + "'\n"
+}
+
+// emitSh is the shell text that writes e's record to the ledger descriptor.
+func emitSh(e artifact.SeedEntry) string {
+	if len(e.Keys) == 0 {
+		e.Keys = []string{testKey}
+	}
+	b, _ := json.Marshal(e)
+	return "printf '%s\\n' '" + string(b) + "' >&3\n"
+}
+
+// The window between zpkx's write and the read-back: a process of the same user
+// that tries to edit the ledger in it finds no file to edit (the ledger is a
+// pipe, there is nothing in the factory's directory).
+func TestProvisionerLedgerHasNoFileToEdit(t *testing.T) {
 	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	var p *seedProvisioner
+	dirOf := filepath.Join(t.TempDir(), "dir")
+	z := fakeZpkx(t, stageSh(seedStore(t), testEntry)+emitSh(testEntry)+
+		"D=$(cat '"+dirOf+"')\n"+
+		"for f in \"$D\"/*; do case \"$f\" in */resolve-ledger) ;; *) [ -e \"$f\" ] && exit 5;; esac; done\nexit 0\n")
 	p, err := newSeedProvisioner(z, "oci://seed", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "cannot read the ledger") {
-		t.Errorf("a ledger behind a replaced directory: %v", err)
+	if err := os.WriteFile(dirOf, []byte(p.dir), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Fatalf("a file appeared in the directory, or the call failed: %v", err)
+	}
+	if es := p.Entries(); len(es) != 1 || es[0].Project != "p" {
+		t.Errorf("the entry was lost: %+v", es)
+	}
+}
+
+// A descendant that keeps the pipe open after the call ended does not hang the
+// factory, and the read the deadline ended is REFUSED: what it got is not known
+// to be the whole ledger, even when it looks complete.
+func TestProvisionerRefusesAReadTheDeadlineEnded(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	z := fakeZpkx(t, stageSh(seedStore(t), testEntry)+emitSh(testEntry)+"(sleep 3 >/dev/null 2>&1 &)\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	start := time.Now()
+	if _, err := p.Provision([]string{"a"}); !errors.Is(err, errLedgerNotClosed) {
+		t.Fatalf("a deadline-ended read was accepted: %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Error("the read waited for a descendant that held the pipe")
+	}
+	if len(p.Entries()) != 0 {
+		t.Errorf("entries = %+v", p.Entries())
+	}
+}
+
+// The ledger is the descriptor, never a path: no argument names one, so a build
+// root with no /dev/fd, or one a recipe made, changes nothing. A zpkx that still
+// opened the ledger by the argument it was given would write a regular file and
+// leave the pipe empty, and the seeds it staged would be unaccounted for.
+func TestProvisionerPassesADescriptorAndRefusesAPathWritingZpkx(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	dir := seedStore(t)
+	check := "for a in \"$@\"; do case \"$a\" in */dev/fd*|/*) exit 6;; esac; done\n" +
+		"[ \"$3\" = \"--seed-ledger-fd\" ] && [ \"$4\" = \"3\" ] || exit 7\n"
+	good := fakeZpkx(t, check+stageSh(dir, testEntry)+emitSh(testEntry))
+	p, err := newSeedProvisioner(good, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Fatalf("the descriptor form: %v", err)
+	}
+	t.Chdir(t.TempDir())
+	b, _ := json.Marshal(artifact.SeedEntry{Project: "q", Version: "1", Digest: "sha256:q", Signers: []string{}, Keys: []string{}, Source: "oci://seed"})
+	old := fakeZpkx(t, stageSh(dir, artifact.SeedEntry{Project: "q", Version: "1", Digest: "sha256:q"})+
+		"printf '%s\\n' '"+string(b)+"' >> \"$4\"\n")
+	q, err := newSeedProvisioner(old, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	if _, err := q.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "lost an entry") {
+		t.Fatalf("an empty ledger beside a staged seed was accepted: %v", err)
+	}
+}
+
+// The ledger is checked against what the call staged: an injected record, a
+// record whose prefix carries another digest, a marker that is not a file, and a
+// staged seed with no record (removed, or never written) are all refused; the
+// staged, recorded one is accepted.
+func TestProvisionerCrossChecksTheLedgerAgainstTheStagedSeeds(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	other := artifact.SeedEntry{Project: "gnu.org/o", Version: "2.0", Digest: "sha256:e", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	deep := artifact.SeedEntry{Project: "a.org/b/c", Version: "3", Digest: "sha256:f", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	deeper := artifact.SeedEntry{Project: "a.org/b/c/d", Version: "3", Digest: "sha256:f2", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	// A real project whose last segment looks like a version (pcre.org/v2).
+	vseg := artifact.SeedEntry{Project: "pcre.org/v2", Version: "3", Digest: "sha256:f4", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	deepest := artifact.SeedEntry{Project: "a/b/c/d/e/f/g/h", Version: "3", Digest: "sha256:f3", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	for name, c := range map[string]struct {
+		script func(dir string) string
+		want   string // "" accepts
+	}{
+		"matching":             {func(d string) string { return stageSh(d, testEntry) + emitSh(testEntry) }, ""},
+		"three-level project":  {func(d string) string { return stageSh(d, deep) + emitSh(deep) }, ""},
+		"four-level project":   {func(d string) string { return stageSh(d, deeper) + emitSh(deeper) }, ""},
+		"version-like segment": {func(d string) string { return stageSh(d, vseg) + emitSh(vseg) }, ""},
+		"version-like, no record": {func(d string) string {
+			return stageSh(d, vseg) + stageSh(d, deep) + emitSh(deep)
+		}, "lost an entry"},
+		"eight-level project": {func(d string) string { return stageSh(d, deepest) + emitSh(deepest) }, ""},
+		"four-level staged, no record": {func(d string) string {
+			return stageSh(d, deeper) + stageSh(d, deep) + emitSh(deep)
+		}, "lost an entry"},
+		"marker that is a directory": {func(d string) string {
+			p := seedPrefixOf(d, testEntry)
+			return "mkdir -p '" + p + "/" + artifact.SeedMarkerName + "'\n" + emitSh(testEntry)
+		}, "did not stage"},
+		"injected": {func(d string) string { return emitSh(testEntry) }, "did not stage"},
+		"another digest in the marker": {func(d string) string {
+			return stageAs(d, testEntry, "sha256:other") + emitSh(testEntry)
+		}, "did not stage"},
+		"marker is a symlink": {func(d string) string {
+			p := seedPrefixOf(d, testEntry)
+			return "mkdir -p '" + p + "' && ln -s /etc/hosts '" + p + "/" + artifact.SeedMarkerName + "'\n" + emitSh(testEntry)
+		}, "did not stage"},
+		"removed": {func(d string) string {
+			return stageSh(d, testEntry) + stageSh(d, other) + emitSh(testEntry)
+		}, "lost an entry"},
+		"nothing written": {func(d string) string { return stageSh(d, testEntry) }, "lost an entry"},
+	} {
+		dir := seedStore(t)
+		p, err := newSeedProvisioner(fakeZpkx(t, c.script(dir)), "oci://seed", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = p.Provision([]string{"a"})
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: refused: %v", name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		}
+		if c.want != "" && len(p.Entries()) != 0 {
+			t.Errorf("%s: a refused ledger was recorded: %+v", name, p.Entries())
+		}
+		p.Close()
+	}
+}
+
+func TestTheSeedPipeProbe(t *testing.T) {
+	if err := seedPipeSupported(); err != nil {
+		t.Fatalf("this system's pipes: %v", err)
+	}
+	// Each failure is given on its own, with the other end able to succeed, so
+	// no refusal is held by another one.
+	r, w, _ := os.Pipe()
+	defer r.Close()
+	defer w.Close()
+	if err := probePipe(func() (io.ReadCloser, io.WriteCloser, error) { return r, w, errors.New("no pipes") }); err == nil {
+		t.Error("a system that cannot make a pipe passed")
+	}
+	good := func() io.ReadCloser { return io.NopCloser(strings.NewReader("x")) }
+	if err := probePipe(func() (io.ReadCloser, io.WriteCloser, error) { return good(), nopWriter{failingWriter{}}, nil }); err == nil {
+		t.Error("a pipe that cannot be written passed")
+	}
+	if err := probePipe(func() (io.ReadCloser, io.WriteCloser, error) {
+		return io.NopCloser(strings.NewReader("")), nopWriter{io.Discard}, nil
+	}); err == nil {
+		t.Error("a pipe that cannot be read passed")
+	}
+	if err := probePipe(func() (io.ReadCloser, io.WriteCloser, error) { return good(), nopWriter{io.Discard}, nil }); err != nil {
+		t.Errorf("a working pipe was refused: %v", err)
+	}
+}
+
+type nopWriter struct{ io.Writer }
+
+func (nopWriter) Close() error { return nil }
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("closed") }
+
+// A call that writes more than a ledger may hold is refused, and is not left
+// blocked on a full pipe.
+func TestProvisionerRefusesAnOversizedLedger(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	z := fakeZpkx(t, "dd if=/dev/zero bs=1048576 count=17 2>/dev/null | tr '\\0' 'x' >&3\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Provision([]string{"a"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "larger than") {
+			t.Errorf("an oversized ledger: %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the call stayed blocked on a full pipe")
+	}
+}
+
+type failingReader struct {
+	first []byte
+	end   error // what the read ends with; "boom" when nil
+}
+
+func (f *failingReader) Read(b []byte) (int, error) {
+	if len(f.first) > 0 {
+		n := copy(b, f.first)
+		f.first = f.first[n:]
+		return n, nil
+	}
+	if f.end != nil {
+		return 0, f.end
+	}
+	return 0, errors.New("boom")
+}
+
+func TestDrainLedgerReportsAReadFailure(t *testing.T) {
+	if _, err := drainLedger(&failingReader{first: []byte("x")}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("a failing pipe: %v", err)
+	}
+	big := make([]byte, artifact.MaxSeedLedgerBytes+10)
+	_, err := drainLedger(&failingReader{first: big})
+	if err == nil || !strings.Contains(err.Error(), "larger than") || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("an oversized ledger behind a failing pipe: %v", err)
+	}
+	r := deadlineReader{}
+	if b, err := drainLedger(r); !errors.Is(err, errLedgerNotClosed) || len(b) != 0 {
+		t.Errorf("a deadline is a read that did not finish, and is refused: %q, %v", b, err)
+	}
+	if _, err := drainLedger(&failingReader{first: big, end: os.ErrDeadlineExceeded}); err == nil || strings.Contains(err.Error(), "deadline") {
+		t.Errorf("a deadline after an oversized ledger: %v", err)
+	}
+}
+
+type deadlineReader struct{}
+
+func (deadlineReader) Read([]byte) (int, error) { return 0, os.ErrDeadlineExceeded }
+
+func TestProvisionerRefusesWithoutAPipe(t *testing.T) {
+	z := fakeZpkx(t, ": > \"$HOME/ran-never\"\n")
+	p := &seedProvisioner{zpkx: z, from: "oci://seed", seen: map[string]bool{}}
+	defer func(a func() error, b func() (*os.File, *os.File, error)) { seedPipe, newPipe = a, b }(seedPipe, newPipe)
+	seedPipe = func() error { return errors.New("no /dev/fd") }
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "no /dev/fd") {
+		t.Errorf("a system without /dev/fd: %v", err)
+	}
+	seedPipe = func() error { return nil }
+	newPipe = func() (*os.File, *os.File, error) { return nil, nil, errors.New("no pipes") }
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "no pipes") {
+		t.Errorf("no pipe could be made: %v", err)
+	}
+}
+
+func TestParseSeedLedger(t *testing.T) {
+	ord := `{"project":"p","version":"%s","digest":"%s","keys":["` + testKey + `"],"source":"oci://seed"}` + "\n"
+	in := strings.NewReplacer("%s", "X").Replace("") +
+		strings.Replace(strings.Replace(ord, "%s", "2", 1), "%s", "d1", 1) +
+		strings.Replace(strings.Replace(ord, "%s", "1", 1), "%s", "d2", 1) +
+		strings.Replace(strings.Replace(ord, "%s", "1", 1), "%s", "d1", 1)
+	if es, err := parseSeedLedger([]byte(in), "oci://seed"); err != nil || len(es) != 3 ||
+		es[0].Version != "1" || es[0].Digest != "d1" || es[1].Digest != "d2" || es[2].Version != "2" {
+		t.Errorf("ordered by project, version, digest: %+v, %v", es, err)
+	}
+	two := entryLine + "\n\n" + strings.Replace(entryLine, `"p"`, `"a"`, 1) + "\n" + entryLine + "\n"
+	es, err := parseSeedLedger([]byte(two), "oci://seed")
+	if err != nil || len(es) != 2 || es[0].Project != "a" || es[1].Project != "p" {
+		t.Errorf("sorted and deduplicated: %+v, %v", es, err)
+	}
+	if es, err := parseSeedLedger(nil, "oci://seed"); err != nil || len(es) != 0 {
+		t.Errorf("an empty ledger: %+v, %v", es, err)
+	}
+	src := `,"keys":["` + testKey + `"],"source":"oci://seed"}` + "\n"
+	nokeys := `,"source":"oci://seed"}` + "\n"
+	for name, in := range map[string]string{
+		"no keys":       `{"project":"p","version":"1","digest":"d"` + nokeys,
+		"empty keys":    `{"project":"p","version":"1","digest":"d","keys":[]` + nokeys,
+		"not json":      "notjson\n",
+		"unknown field": `{"project":"p","version":"1","digest":"d","extra":1` + src,
+		"no digest":     `{"project":"p","version":"1"` + src,
+		"no project":    `{"version":"1","digest":"d"` + src,
+		"no version":    `{"project":"p","digest":"d"` + src,
+		// The record is bound to what was asked for.
+		"another registry":     `{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"],"source":"oci://elsewhere"}` + "\n",
+		"no registry":          `{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"]}` + "\n",
+		"a key not in the set": `{"project":"p","version":"1","digest":"d","keys":["nobody"]` + nokeys,
+		"a dotdot project":     `{"project":"x/../zlib.net","version":"1","digest":"d"` + src,
+		"a leading slash":      `{"project":"/p","version":"1","digest":"d"` + src,
+		"a build-like segment": `{"project":"a/v1.0-hx/b","version":"1","digest":"d"` + src,
+		"bytes after the line": `{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"],"source":"oci://seed"} {}` + "\n",
+		"two lines disagree": `{"project":"p","version":"1","digest":"d","signers":["a"]` + src +
+			`{"project":"p","version":"1","digest":"d","signers":["b"]` + src,
+		"two lines differ in the keys only": `{"project":"p","version":"1","digest":"d"` + src +
+			`{"project":"p","version":"1","digest":"d","keys":["` + testKey + `","` + testKey + `"],"source":"oci://seed"}` + "\n",
+		"two lines differ in the source only": `{"project":"p","version":"1","digest":"d"` + src +
+			`{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"],"source":"oci://seed2"}` + "\n",
+	} {
+		if _, err := parseSeedLedger([]byte(in), "oci://seed"); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// Two lines that say the same thing in another order are one record; a key
+	// of the trust set is accepted.
+	same := `{"project":"p","version":"1","digest":"d","signers":["b","a"],"keys":["` + testKey + `"],"source":"oci://seed"}` + "\n" +
+		`{"project":"p","version":"1","digest":"d","signers":["a","b"],"keys":["` + testKey + `"],"source":"oci://seed"}` + "\n"
+	if es, err := parseSeedLedger([]byte(same), "oci://seed"); err != nil || len(es) != 1 {
+		t.Errorf("one record twice: %+v, %v", es, err)
+	}
+}
+
+// The walk of the store is bounded: a tree deeper than any project name is not
+// followed to its end, and a real project is found at its deepest.
+func TestStagedSeedsWalkIsBounded(t *testing.T) {
+	dir := t.TempDir()
+	deep := dir
+	for i := 0; i < maxStoreDepth+3; i++ {
+		deep = filepath.Join(deep, "d")
+	}
+	if err := os.MkdirAll(filepath.Join(deep, "v1-h"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "v1-h", artifact.SeedMarkerName), []byte("x\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if got := stagedSeeds(dir); len(got) != 0 {
+		t.Errorf("a marker deeper than any project was found: %v", got)
+	}
+	// A real seed reachable only through a symlinked project directory is not
+	// followed: the store holds it by its real directory.
+	real := t.TempDir()
+	prefix := seedPrefixOf(real, testEntry)
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prefix, artifact.SeedMarkerName), []byte(testEntry.Digest+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if got := stagedSeeds(real); len(got) != 1 {
+		t.Fatalf("the real store: %v", got)
+	}
+	link := t.TempDir()
+	if err := os.Symlink(filepath.Join(real, "p"), filepath.Join(link, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if got := stagedSeeds(link); len(got) != 0 {
+		t.Errorf("a symlinked project directory was followed: %v", got)
+	}
+}
+
+// A call that fails after staging seeds (a transient registry error) already
+// wrote their records: the next call is not refused for them. A seed with no
+// valid record stays unaccounted for, and a record with another digest or a
+// ledger that does not parse accounts for nothing.
+func TestAFailedCallDoesNotPoisonTheNextOne(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	for name, c := range map[string]struct {
+		first func(dir string) string
+		ok    bool // the next call passes
+	}{
+		"staged and recorded":  {func(d string) string { return stageSh(d, testEntry) + emitSh(testEntry) }, true},
+		"staged, not recorded": {func(d string) string { return stageSh(d, testEntry) }, false},
+		"recorded another digest": {func(d string) string {
+			return stageAs(d, testEntry, "sha256:other") + emitSh(testEntry)
+		}, false},
+		"ledger that does not parse": {func(d string) string { return stageSh(d, testEntry) + "echo notjson >&3\n" }, false},
+		"ledger left open": {func(d string) string {
+			return stageSh(d, testEntry) + emitSh(testEntry) + "(sleep 3 >/dev/null 2>&1 &)\n"
+		}, false},
+	} {
+		dir := seedStore(t)
+		flag := filepath.Join(t.TempDir(), "first-done")
+		z := fakeZpkx(t, "if [ ! -e '"+flag+"' ]; then : > '"+flag+"'\n"+c.first(dir)+"exit 3\nfi\necho ok\n")
+		p, err := newSeedProvisioner(z, "oci://seed", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Provision([]string{"a"}); err == nil {
+			t.Fatalf("%s: the failing call passed", name)
+		}
+		// A recorded seed stays in the store and the next call reuses it without a
+		// record, so its entry is kept from the failed call; nothing else is.
+		want := 0
+		if c.ok {
+			want = 1
+		}
+		if got := p.Entries(); len(got) != want || (want == 1 && provisionKey(got[0]) != provisionKey(testEntry)) {
+			t.Errorf("%s: after the failed call the entries are %+v, want %d of %s", name, got, want, testEntry.Project)
+		}
+		_, err = p.Provision([]string{"a"})
+		if c.ok && err != nil {
+			t.Errorf("%s: the next call was refused: %v", name, err)
+		}
+		if c.ok {
+			if got := p.Entries(); len(got) != 1 || provisionKey(got[0]) != provisionKey(testEntry) {
+				t.Errorf("%s: after the retry the signed set is %+v, want the reused seed", name, got)
+			}
+		}
+		if !c.ok && (err == nil || !strings.Contains(err.Error(), "lost an entry")) {
+			t.Errorf("%s: the next call was not refused for the unrecorded seed: %v", name, err)
+		}
+		p.Close()
+	}
+}
+
+// A seed staged BETWEEN two calls, by anything but a call, is asked for a
+// record by the next one: nothing is accounted for just because it was there
+// when that call started.
+func TestProvisionerRefusesASeedStagedBetweenCalls(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	dir := seedStore(t)
+	second := artifact.SeedEntry{Project: "q", Version: "1", Digest: "sha256:q", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	z := fakeZpkx(t, `if [ "$#" = 5 ]; then `+stageSh(dir, testEntry)+emitSh(testEntry)+"fi\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Provision([]string{"a"}); err != nil { // nothing new: fine
+		t.Fatalf("a call that staged nothing: %v", err)
+	}
+	mk := fakeZpkx(t, stageSh(dir, second))
+	if out, err := exec.Command(mk).CombinedOutput(); err != nil {
+		t.Fatalf("staging outside a call: %v %s", err, out)
+	}
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "lost an entry") {
+		t.Errorf("a seed staged between two calls was accepted: %v", err)
+	}
+}
+
+// A seed already in the store when the provisioner is made is its baseline, not
+// something a later call must account for.
+func TestProvisionerTrustsTheStoreItStartedFrom(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	dir := seedStore(t)
+	mk := fakeZpkx(t, stageSh(dir, testEntry))
+	if out, err := exec.Command(mk).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	p, err := newSeedProvisioner(fakeZpkx(t, "echo ok\n"), "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if _, err := p.Provision([]string{"a"}); err != nil {
+		t.Errorf("a baseline seed was refused: %v", err)
+	}
+}
+
+// A pipe that cannot have a read deadline is refused before zpkx starts, and one
+// whose deadline cannot be set after the call ends is refused too: neither
+// hangs on a descendant that holds the write end.
+func TestProvisionerRefusesAPipeWithoutADeadline(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	ran := filepath.Join(t.TempDir(), "ran")
+	z := fakeZpkx(t, ": > '"+ran+"'\n")
+	p, err := newSeedProvisioner(z, "oci://seed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	defer func(f func(*os.File, time.Time) error) { setReadDeadline = f }(setReadDeadline)
+	setReadDeadline = func(*os.File, time.Time) error { return errors.New("no deadlines") }
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "no read deadline") {
+		t.Errorf("a pipe with no deadline: %v", err)
+	}
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("zpkx was started on a pipe that cannot time out")
+	}
+	n := 0
+	setReadDeadline = func(f *os.File, t time.Time) error {
+		if n++; n == 1 {
+			return f.SetReadDeadline(t)
+		}
+		return errors.New("no deadlines now")
+	}
+	if _, err := p.Provision([]string{"a"}); err == nil || !strings.Contains(err.Error(), "could not be set") {
+		t.Errorf("a deadline that cannot be set after the call: %v", err)
 	}
 }
 
 func TestProvisionerRecordsWhatEachClosureInstalled(t *testing.T) {
-	// $5 is the ledger path: arguments are --seed-from X --seed-ledger L +spec...
+	// Arguments are --seed-from X --seed-ledger-fd 3 +spec...: $5 is the first
+	// spec, and $# (5 for one spec, 6 for two) picks the seed this call stages.
+	dir := seedStore(t)
+	five := artifact.SeedEntry{Project: "p5", Version: "1.0.0", Digest: "sha256:d5", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+	six := artifact.SeedEntry{Project: "p6", Version: "1.0.0", Digest: "sha256:d6", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
 	z := fakeZpkx(t, `
 if [ -n "$ZPKX_SEEDED" ]; then echo nested >&2; exit 9; fi
-[ "$1" = "--seed-from" ] && [ "$2" = "oci://seed" ] && [ "$3" = "--seed-ledger" ] || exit 8
+[ "$1" = "--seed-from" ] && [ "$2" = "oci://seed" ] && [ "$3" = "--seed-ledger-fd" ] && [ "$4" = "3" ] || exit 8
 [ "$CLICOLOR_FORCE" = "1" ] || exit 7
-printf '{"project":"p%s","version":"1.0.0","digest":"sha256:d%s","signers":[],"keys":[],"source":"s"}\n' "$#" "$#" >> "$4"
+case "$#" in
+5)
+`+stageSh(dir, five)+emitSh(five)+`;;
+6)
+`+stageSh(dir, six)+emitSh(six)+`;;
+esac
 echo "X=$5"
 `)
 	t.Setenv("ZPKX_SEEDED", "oci://seed")
@@ -161,7 +658,7 @@ func TestProvisionerRefusals(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	for name, body := range map[string]string{
 		"exit":       "exit 3\n",
-		"bad ledger": "echo notjson > \"$4\"\n",
+		"bad ledger": "echo notjson >&3\n",
 	} {
 		p, err := newSeedProvisioner(fakeZpkx(t, body), "oci://seed", nil)
 		if err != nil {
@@ -179,7 +676,7 @@ func TestProvisionerRefusals(t *testing.T) {
 		t.Fatalf("%q %v", env, err)
 	}
 	// An environment past the bound is refused.
-	big := fakeZpkx(t, "head -c 5000000 /dev/zero\n")
+	big := fakeZpkx(t, "dd if=/dev/zero bs=1000000 count=5 2>/dev/null\n")
 	p2, _ := newSeedProvisioner(big, "oci://seed", nil)
 	defer p2.Close()
 	if _, err := p2.Provision([]string{"a"}); err == nil {
