@@ -374,6 +374,28 @@ func TestLoadBuildRecipeStandaloneEdges(t *testing.T) {
 	}
 }
 
+func TestLoadStandaloneOverlay(t *testing.T) {
+	overlay := t.TempDir()
+	writeRecipe(t, overlay, "whole.org", "package.hcl", standaloneHCL)
+	writeRecipe(t, overlay, "frag.org", "package.hcl", fragmentHCL)
+	writeRecipe(t, overlay, "bad.org", "package.hcl", "distributable {")
+	if r, ok, err := LoadStandaloneOverlay(overlay, "whole.org"); err != nil || !ok || r.Dependencies["openssl.org"] != "^3" {
+		t.Errorf("standalone: %v %v %v", r, ok, err)
+	}
+	if _, ok, err := LoadStandaloneOverlay(overlay, "frag.org"); err != nil || ok {
+		t.Errorf("fragment: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := LoadStandaloneOverlay(overlay, "none.org"); err != nil || ok {
+		t.Errorf("absent: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := LoadStandaloneOverlay("", "whole.org"); err != nil || ok {
+		t.Errorf("no overlay: ok=%v err=%v", ok, err)
+	}
+	if _, _, err := LoadStandaloneOverlay(overlay, "bad.org"); err == nil {
+		t.Error("an unparsable overlay recipe must be an error")
+	}
+}
+
 // TestLoadMergedMerges pins the rule a REDUCED overlay depends on. An
 // entry that states `dependencies` and nothing else is a fragment, and reading
 // it whole gave a recipe with no build and no distributable — measured as

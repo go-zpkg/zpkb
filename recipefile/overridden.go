@@ -142,6 +142,21 @@ func LoadBuildRecipe(set *logical.Set, overlayDir, pantryDir, project string) (*
 	return r, Dir(overlayDir, project), err
 }
 
+// LoadStandaloneOverlay returns the overlay's recipe for a project when it is
+// STANDALONE (artifact.IsStandalone) and ok is true; otherwise ok is false and
+// the caller takes the fragment path. It is the test LoadBuildRecipe and
+// LoadMerged apply, exported so the closure walk plans from the same recipe the
+// build reads: a standalone recipe is read alone, never beside upstream's twin.
+// A recipe that exists and does not parse is an error, never a quiet skip.
+func LoadStandaloneOverlay(overlayDir, project string) (r *pantry.Recipe, ok bool, err error) {
+	over, has, err := sideDoc(overlayDir, project)
+	if err != nil || !has || !artifact.IsStandalone(over) {
+		return nil, false, err
+	}
+	r, err = Load(overlayDir, project)
+	return r, err == nil, err
+}
+
 // LoadMerged reads the overlay MERGED over the pantry recipe as WE build it —
 // upstream's, with the logical overrides applied. With a nil set it is
 // artifact.recipeDoc exactly, which is what a consumer resolves.

@@ -187,6 +187,41 @@ func TestClosureOfCollectsDemandsFromBothHalves(t *testing.T) {
 	}
 }
 
+const standaloneBody = "versions:\n  - 1.0.0\ndistributable:\n  url: https://ours.example/x.tar.gz\nbuild: ./configure\n"
+
+// A STANDALONE overlay recipe is the whole recipe: the build reads it alone, so
+// the walk takes neither its constraints nor its edges from upstream's twin.
+// Seed pass 1: curl.se asked openssl for "^1.1" (pantry) and "^3" (overlay).
+func TestClosureOfStandaloneOverlayIsReadAlone(t *testing.T) {
+	pantry, overlay := t.TempDir(), t.TempDir()
+	writeClosureRecipe(t, pantry, "curl.se", "dependencies:\n  openssl.org: ^1.1\n  pantry.only: '*'\n")
+	writeClosureRecipe(t, overlay, "curl.se", standaloneBody+"dependencies:\n  openssl.org: ^3\n")
+	writeClosureRecipe(t, pantry, "openssl.org", "build: make\n")
+	writeClosureRecipe(t, pantry, "pantry.only", "build: make\n")
+
+	order, demands, _ := closureOf(nil, overlay, pantry, target.Target{Platform: "linux", Arch: "x86-64"},
+		[]string{"curl.se"}, func(string) {})
+	if got := demands["openssl.org"]; len(got) != 1 || got[0] != "^3" {
+		t.Errorf("demands = %v, want only ^3", got)
+	}
+	if slices.Contains(order, "pantry.only") {
+		t.Errorf("an edge only the pantry has was followed: %v", order)
+	}
+}
+
+// A recipe only the pantry carries keeps working as before.
+func TestClosureOfPantryOnlyRecipeUnchanged(t *testing.T) {
+	pantry, overlay := t.TempDir(), t.TempDir()
+	writeClosureRecipe(t, pantry, "app.org", "dependencies:\n  lib.org: ^1.1\n")
+	writeClosureRecipe(t, pantry, "lib.org", "build: make\n")
+
+	order, demands, _ := closureOf(nil, overlay, pantry, target.Target{Platform: "linux", Arch: "x86-64"},
+		[]string{"app.org"}, func(string) {})
+	if !slices.Contains(order, "lib.org") || len(demands["lib.org"]) != 1 || demands["lib.org"][0] != "^1.1" {
+		t.Errorf("order = %v demands = %v", order, demands)
+	}
+}
+
 // A project only the overlay carries is still a project, and a recipe that
 // exists in either half and does not parse is never skipped quietly: the walk
 // would plan a build around a recipe it could not read.
