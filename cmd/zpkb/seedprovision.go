@@ -218,6 +218,13 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	}
 	l := <-got
 	if err != nil {
+		// zpkx writes each record as soon as a seed is verified, so a call that
+		// failed later (a transient registry error) has staged seeds that DO have
+		// records. Those are accounted for, so the retry is not refused for them;
+		// a seed with no valid record stays unaccounted for.
+		if l.err == nil {
+			p.accountNamed(l.b)
+		}
 		return "", err
 	}
 	if l.err != nil {
@@ -236,6 +243,23 @@ func (p *seedProvisioner) Provision(specs []string) (string, error) {
 	}
 	p.add(es)
 	return out.String(), nil
+}
+
+// accountNamed marks as accounted for the staged markers that a valid record of
+// a FAILED call names with the digest the marker holds. It adds no entry: the
+// call failed, so nothing was installed for the build. A ledger that does not
+// parse accounts for nothing.
+func (p *seedProvisioner) accountNamed(b []byte) {
+	// parseSeedLedger returns no entry with an error, so a ledger that does not
+	// parse leaves es empty and the loop accounts for nothing.
+	es, _ := parseSeedLedger(b, p.from)
+	after := stagedSeeds(artifact.Dir())
+	for _, e := range es {
+		m := filepath.Join(seedPrefixOf(artifact.Dir(), e), artifact.SeedMarkerName)
+		if d, ok := after[m]; ok && d == e.Digest {
+			p.accounted[m] = d
+		}
+	}
 }
 
 // drainGrace is how long the read of a call's ledger goes on after the call
@@ -408,6 +432,9 @@ func parseSeedLedger(b []byte, from string) ([]artifact.SeedEntry, error) {
 		}
 		sort.Strings(e.Signers)
 		sort.Strings(e.Keys)
+		if len(e.Keys) == 0 {
+			return nil, fmt.Errorf("seed ledger line %d: a record names the keys that signed what it installed, and this names none", i+1)
+		}
 		for _, k := range e.Keys {
 			if !trusted[k] {
 				return nil, fmt.Errorf("seed ledger line %d: key %q is not in the seed trust set", i+1, k)

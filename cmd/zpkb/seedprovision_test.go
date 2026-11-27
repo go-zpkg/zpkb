@@ -75,9 +75,12 @@ func TestProvisionerRefusesPlantedLedgersAndANonEmptyPlanLedger(t *testing.T) {
 	}
 }
 
-const entryLine = `{"project":"p","version":"1.0.0","digest":"sha256:d","signers":[],"keys":[],"source":"oci://seed"}`
+// testKey is a key id of the seed trust set: a record names at least one.
+var testKey = artifact.SeedTrustSet().Signers[0].KeyID()
 
-var testEntry = artifact.SeedEntry{Project: "p", Version: "1.0.0", Digest: "sha256:d", Signers: []string{}, Keys: []string{}, Source: "oci://seed"}
+var entryLine = `{"project":"p","version":"1.0.0","digest":"sha256:d","signers":[],"keys":["` + testKey + `"],"source":"oci://seed"}`
+
+var testEntry = artifact.SeedEntry{Project: "p", Version: "1.0.0", Digest: "sha256:d", Signers: []string{}, Keys: []string{testKey}, Source: "oci://seed"}
 
 // seedStore points the artifact store at a directory of the test's own, which
 // the fake zpkx stages seeds in (the real one installs them there).
@@ -101,6 +104,9 @@ func stageAs(dir string, e artifact.SeedEntry, markDigest string) string {
 
 // emitSh is the shell text that writes e's record to the ledger descriptor.
 func emitSh(e artifact.SeedEntry) string {
+	if len(e.Keys) == 0 {
+		e.Keys = []string{testKey}
+	}
 	b, _ := json.Marshal(e)
 	return "printf '%s\\n' '" + string(b) + "' >&3\n"
 }
@@ -363,7 +369,7 @@ func TestProvisionerRefusesWithoutAPipe(t *testing.T) {
 }
 
 func TestParseSeedLedger(t *testing.T) {
-	ord := `{"project":"p","version":"%s","digest":"%s","source":"oci://seed"}` + "\n"
+	ord := `{"project":"p","version":"%s","digest":"%s","keys":["` + testKey + `"],"source":"oci://seed"}` + "\n"
 	in := strings.NewReplacer("%s", "X").Replace("") +
 		strings.Replace(strings.Replace(ord, "%s", "2", 1), "%s", "d1", 1) +
 		strings.Replace(strings.Replace(ord, "%s", "1", 1), "%s", "d2", 1) +
@@ -380,23 +386,30 @@ func TestParseSeedLedger(t *testing.T) {
 	if es, err := parseSeedLedger(nil, "oci://seed"); err != nil || len(es) != 0 {
 		t.Errorf("an empty ledger: %+v, %v", es, err)
 	}
-	src := `,"source":"oci://seed"}` + "\n"
+	src := `,"keys":["` + testKey + `"],"source":"oci://seed"}` + "\n"
+	nokeys := `,"source":"oci://seed"}` + "\n"
 	for name, in := range map[string]string{
+		"no keys":       `{"project":"p","version":"1","digest":"d"` + nokeys,
+		"empty keys":    `{"project":"p","version":"1","digest":"d","keys":[]` + nokeys,
 		"not json":      "notjson\n",
 		"unknown field": `{"project":"p","version":"1","digest":"d","extra":1` + src,
 		"no digest":     `{"project":"p","version":"1"` + src,
 		"no project":    `{"version":"1","digest":"d"` + src,
 		"no version":    `{"project":"p","digest":"d"` + src,
 		// The record is bound to what was asked for.
-		"another registry":     `{"project":"p","version":"1","digest":"d","source":"oci://elsewhere"}` + "\n",
-		"no registry":          `{"project":"p","version":"1","digest":"d"}` + "\n",
-		"a key not in the set": `{"project":"p","version":"1","digest":"d","keys":["nobody"]` + src,
+		"another registry":     `{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"],"source":"oci://elsewhere"}` + "\n",
+		"no registry":          `{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"]}` + "\n",
+		"a key not in the set": `{"project":"p","version":"1","digest":"d","keys":["nobody"]` + nokeys,
 		"a dotdot project":     `{"project":"x/../zlib.net","version":"1","digest":"d"` + src,
 		"a leading slash":      `{"project":"/p","version":"1","digest":"d"` + src,
 		"a build-like segment": `{"project":"a/v1.0-hx/b","version":"1","digest":"d"` + src,
-		"bytes after the line": `{"project":"p","version":"1","digest":"d"` + `,"source":"oci://seed"} {}` + "\n",
+		"bytes after the line": `{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"],"source":"oci://seed"} {}` + "\n",
 		"two lines disagree": `{"project":"p","version":"1","digest":"d","signers":["a"]` + src +
 			`{"project":"p","version":"1","digest":"d","signers":["b"]` + src,
+		"two lines differ in the keys only": `{"project":"p","version":"1","digest":"d"` + src +
+			`{"project":"p","version":"1","digest":"d","keys":["` + testKey + `","` + testKey + `"],"source":"oci://seed"}` + "\n",
+		"two lines differ in the source only": `{"project":"p","version":"1","digest":"d"` + src +
+			`{"project":"p","version":"1","digest":"d","keys":["` + testKey + `"],"source":"oci://seed2"}` + "\n",
 	} {
 		if _, err := parseSeedLedger([]byte(in), "oci://seed"); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -404,9 +417,8 @@ func TestParseSeedLedger(t *testing.T) {
 	}
 	// Two lines that say the same thing in another order are one record; a key
 	// of the trust set is accepted.
-	id := artifact.SeedTrustSet().Signers[0].KeyID()
-	same := `{"project":"p","version":"1","digest":"d","signers":["b","a"],"keys":["` + id + `"]` + src +
-		`{"project":"p","version":"1","digest":"d","signers":["a","b"],"keys":["` + id + `"]` + src
+	same := `{"project":"p","version":"1","digest":"d","signers":["b","a"],"keys":["` + testKey + `"],"source":"oci://seed"}` + "\n" +
+		`{"project":"p","version":"1","digest":"d","signers":["a","b"],"keys":["` + testKey + `"],"source":"oci://seed"}` + "\n"
 	if es, err := parseSeedLedger([]byte(same), "oci://seed"); err != nil || len(es) != 1 {
 		t.Errorf("one record twice: %+v, %v", es, err)
 	}
@@ -429,11 +441,69 @@ func TestStagedSeedsWalkIsBounded(t *testing.T) {
 	if got := stagedSeeds(dir); len(got) != 0 {
 		t.Errorf("a marker deeper than any project was found: %v", got)
 	}
-	if err := os.Symlink(dir, filepath.Join(dir, "alias")); err != nil {
+	// A real seed reachable only through a symlinked project directory is not
+	// followed: the store holds it by its real directory.
+	real := t.TempDir()
+	prefix := seedPrefixOf(real, testEntry)
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := stagedSeeds(dir); len(got) != 0 {
-		t.Errorf("a symlink was followed: %v", got)
+	if err := os.WriteFile(filepath.Join(prefix, artifact.SeedMarkerName), []byte(testEntry.Digest+"\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if got := stagedSeeds(real); len(got) != 1 {
+		t.Fatalf("the real store: %v", got)
+	}
+	link := t.TempDir()
+	if err := os.Symlink(filepath.Join(real, "p"), filepath.Join(link, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if got := stagedSeeds(link); len(got) != 0 {
+		t.Errorf("a symlinked project directory was followed: %v", got)
+	}
+}
+
+// A call that fails after staging seeds (a transient registry error) already
+// wrote their records: the next call is not refused for them. A seed with no
+// valid record stays unaccounted for, and a record with another digest or a
+// ledger that does not parse accounts for nothing.
+func TestAFailedCallDoesNotPoisonTheNextOne(t *testing.T) {
+	t.Setenv("ZPKX_SEEDED", "oci://seed")
+	for name, c := range map[string]struct {
+		first func(dir string) string
+		ok    bool // the next call passes
+	}{
+		"staged and recorded":  {func(d string) string { return stageSh(d, testEntry) + emitSh(testEntry) }, true},
+		"staged, not recorded": {func(d string) string { return stageSh(d, testEntry) }, false},
+		"recorded another digest": {func(d string) string {
+			return stageAs(d, testEntry, "sha256:other") + emitSh(testEntry)
+		}, false},
+		"ledger that does not parse": {func(d string) string { return stageSh(d, testEntry) + "echo notjson >&3\n" }, false},
+		"ledger left open": {func(d string) string {
+			return stageSh(d, testEntry) + emitSh(testEntry) + "(sleep 3 >/dev/null 2>&1 &)\n"
+		}, false},
+	} {
+		dir := seedStore(t)
+		flag := filepath.Join(t.TempDir(), "first-done")
+		z := fakeZpkx(t, "if [ ! -e '"+flag+"' ]; then : > '"+flag+"'\n"+c.first(dir)+"exit 3\nfi\necho ok\n")
+		p, err := newSeedProvisioner(z, "oci://seed", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Provision([]string{"a"}); err == nil {
+			t.Fatalf("%s: the failing call passed", name)
+		}
+		if len(p.Entries()) != 0 {
+			t.Errorf("%s: a failed call recorded entries: %+v", name, p.Entries())
+		}
+		_, err = p.Provision([]string{"a"})
+		if c.ok && err != nil {
+			t.Errorf("%s: the next call was refused: %v", name, err)
+		}
+		if !c.ok && (err == nil || !strings.Contains(err.Error(), "lost an entry")) {
+			t.Errorf("%s: the next call was not refused for the unrecorded seed: %v", name, err)
+		}
+		p.Close()
 	}
 }
 
