@@ -3,16 +3,16 @@ module github.com/go-zpkg/zpkb
 go 1.27.4
 
 require (
-	github.com/ProtonMail/go-crypto v1.1.6
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/bluekeyes/go-gitdiff v0.9.0
 	github.com/go-attest/sbom v0.3.0
-	github.com/go-attest/sign v0.3.0
+	github.com/go-attest/sign v0.5.0
 	github.com/go-compressions/xz v0.3.1
 	github.com/go-git/go-git/v5 v5.19.3
-	github.com/go-regexp/engine v0.3.2
+	github.com/go-regexp/engine v0.4.2
 	github.com/go-versions/semver v0.3.0
 	github.com/go-zpkg/artifact v0.101.0
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
@@ -42,14 +42,14 @@ require (
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/zclconf/go-cty v1.20.0 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/term v0.48.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
+	golang.org/x/tools v0.52.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	oras.land/oras-go/v2 v2.7.0 // indirect
 )
