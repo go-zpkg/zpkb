@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -78,6 +79,11 @@ func installAt(t *testing.T, v string) string {
 	cmd.Env = append(os.Environ(), "GOPROXY=file://"+filepath.Join(root, "proxy"), "GOSUMDB=off", "GOFLAGS=-mod=mod -modcacherw",
 		"GOBIN="+bin, "GOPATH="+filepath.Join(root, "gopath"), "GOTOOLCHAIN=local", "GOWORK=off")
 	if out, err := cmd.CombinedOutput(); err != nil {
+		// The lanes that run the test binary in a VM or under qemu have no
+		// usable Go toolchain; the native lanes do, and must not skip silently.
+		if p := runtime.GOOS + "/" + runtime.GOARCH; p != "linux/amd64" && p != "darwin/arm64" {
+			t.Skipf("no usable go toolchain on %s: %v\n%s", p, err, out)
+		}
 		t.Fatalf("go install %s@%s: %v\n%s", mod, v, err, out)
 	}
 	return filepath.Join(bin, "fakezpkx")
@@ -194,11 +200,14 @@ func TestAnUnversionedZpkxIsRefusedUnlessOptedIn(t *testing.T) {
 	}
 }
 
-// The three readers, asserted on both sides of each guard.
-func TestTheVersionReadersSayWhatTheyRead(t *testing.T) {
+func TestTheModuleVersionReaderReadsAGoInstall(t *testing.T) {
 	if v, err := moduleVersionOf(installAt(t, "v0.45.0")); err != nil || v != "v0.45.0" {
 		t.Errorf("moduleVersionOf a go-installed binary: %q %v", v, err)
 	}
+}
+
+// The three readers, asserted on both sides of each guard.
+func TestTheVersionReadersSayWhatTheyRead(t *testing.T) {
 	if v, err := moduleVersionOf(fakeZpkx(t, "exit 0\n")); err == nil {
 		t.Errorf("a script has no build info, got %q", v)
 	}
