@@ -481,6 +481,12 @@ func runFactory(args []string, stdout, stderr io.Writer) int {
 	if *seedLedger != "" {
 		// Under a seed the script cannot ask zpkx for packages (zpkx refuses it),
 		// so the factory installs each closure from the seed itself, recorded.
+		// Refuse a zpkx too old for the flags below BEFORE the first build, not
+		// as one identical failure per build an hour later.
+		if err := requireZpkx(zpkxBin, stderr); err != nil {
+			fmt.Fprintln(stderr, "factory:", err)
+			return 1
+		}
 		var perr error
 		if provisioner, perr = newSeedProvisioner(zpkxBin, os.Getenv("ZPKX_SEEDED"), seedSnap); perr != nil {
 			fmt.Fprintln(stderr, "factory:", perr)
